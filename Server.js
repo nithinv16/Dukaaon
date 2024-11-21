@@ -2,8 +2,7 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-app.post('/api/loan/apply', (req, res) => 
-  console.log(req.body); // Log request body
+app.post('/api/loan/apply', (req, res) => {
   const { amount, tenure } = req.body;
   // Business logic for loan approval
   res.send({ message: 'Loan approved!', status: 'success' });
