@@ -1,0 +1,50 @@
+// Settings for dukaaon project
+// This file configures the project structure and dependency resolution
+
+rootProject.name = 'dukaaon'
+
+// Enable Gradle configuration cache for better performance
+startParameter.isBuildCacheEnabled = false
+startParameter.isConfigurationCacheRequested = false
+
+// Configure dependency resolution
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://www.jitpack.io' }
+        // Add any additional repositories here
+    }
+    
+    // Force specific versions to resolve conflicts
+    versionCatalogs {
+        libs {
+            // AndroidX versions
+            version('androidx-core', '1.13.1')
+            version('androidx-versionedparcelable', '1.1.1')
+            version('androidx-vectordrawable', '1.2.0')
+            
+            // Libraries
+            library('androidx-core', 'androidx.core', 'core').versionRef('androidx-core')
+            library('androidx-versionedparcelable', 'androidx.versionedparcelable', 'versionedparcelable').versionRef('androidx-versionedparcelable')
+            library('androidx-vectordrawable', 'androidx.vectordrawable', 'vectordrawable').versionRef('androidx-vectordrawable')
+            library('androidx-vectordrawable-animated', 'androidx.vectordrawable', 'vectordrawable-animated').versionRef('androidx-vectordrawable')
+        }
+    }
+}
+
+// Plugin management
+pluginsManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+// Include Android project if it exists (for Expo managed workflow)
+if (file('android').exists()) {
+    include ':app'
+    project(':app').projectDir = new File('android/app')
+}

@@ -1,0 +1,132 @@
+// Aggressive Android dependency exclusion script
+// This script completely eliminates com.android.support libraries
+
+android {
+    packagingOptions {
+        // Exclude all support library files
+        exclude '**/com/android/support/**'
+        exclude '**/android/support/**'
+        exclude 'META-INF/support-compat_release.kotlin_module'
+        exclude 'META-INF/support-core-utils_release.kotlin_module'
+        exclude 'META-INF/support-core-ui_release.kotlin_module'
+        exclude 'META-INF/support-fragment_release.kotlin_module'
+        
+        // Exclude duplicate classes specifically
+        exclude '**/INotificationSideChannel.class'
+        exclude '**/INotificationSideChannel$Stub.class'
+        exclude '**/INotificationSideChannel$Stub$Proxy.class'
+        exclude '**/IconCompatParcelizer.class'
+        exclude '**/IResultReceiver.class'
+        exclude '**/IResultReceiver$Stub.class'
+        exclude '**/IResultReceiver$Stub$Proxy.class'
+        exclude '**/ResultReceiver.class'
+        exclude '**/ResultReceiver$1.class'
+        exclude '**/ResultReceiver$MyResultReceiver.class'
+        exclude '**/ResultReceiver$MyRunnable.class'
+        
+        // Exclude versionedparcelable duplicates
+        exclude '**/CustomVersionedParcelable.class'
+        exclude '**/NonParcelField.class'
+        exclude '**/ParcelField.class'
+        exclude '**/ParcelImpl.class'
+        exclude '**/ParcelImpl$1.class'
+        exclude '**/ParcelUtils.class'
+        exclude '**/VersionedParcel.class'
+        
+        // Pick first occurrence for remaining conflicts
+        pickFirst '**/libc++_shared.so'
+        pickFirst '**/libjsc.so'
+        pickFirst '**/libhermes.so'
+        pickFirst '**/libfbjni.so'
+        pickFirst '**/libfolly_json.so'
+        pickFirst '**/libglog.so'
+        pickFirst '**/libyoga.so'
+        pickFirst '**/libflipper.so'
+    }
+    
+    // Force exclude support libraries from all configurations
+    configurations.all {
+        exclude group: 'com.android.support', module: 'support-compat'
+        exclude group: 'com.android.support', module: 'support-core-utils'
+        exclude group: 'com.android.support', module: 'support-core-ui'
+        exclude group: 'com.android.support', module: 'support-fragment'
+        exclude group: 'com.android.support', module: 'animated-vector-drawable'
+        exclude group: 'com.android.support', module: 'support-vector-drawable'
+        exclude group: 'com.android.support', module: 'versionedparcelable'
+        exclude group: 'com.android.support', module: 'appcompat-v7'
+        exclude group: 'com.android.support', module: 'recyclerview-v7'
+        exclude group: 'com.android.support', module: 'cardview-v7'
+        exclude group: 'com.android.support', module: 'design'
+        exclude group: 'com.android.support', module: 'support-v4'
+        exclude group: 'com.android.support', module: 'support-annotations'
+        
+        resolutionStrategy {
+            // Force specific AndroidX versions
+            force 'androidx.core:core:1.13.1'
+            force 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+            force 'androidx.vectordrawable:vectordrawable:1.2.0'
+            force 'androidx.vectordrawable:vectordrawable-animated:1.2.0'
+            force 'androidx.lifecycle:lifecycle-common:2.8.6'
+            force 'androidx.lifecycle:lifecycle-runtime:2.8.6'
+            force 'androidx.annotation:annotation:1.8.2'
+            
+            // Fail on any support library dependency
+            eachDependency { DependencyResolveDetails details ->
+                if (details.requested.group == 'com.android.support') {
+                    throw new GradleException("Support library dependency found: ${details.requested.group}:${details.requested.name}:${details.requested.version}. All support libraries must be migrated to AndroidX.")
+                }
+            }
+            
+            // Replace any remaining support library references
+            dependencySubstitution {
+                substitute module('com.android.support:support-compat') using module('androidx.core:core:1.13.1')
+                substitute module('com.android.support:versionedparcelable') using module('androidx.versionedparcelable:versionedparcelable:1.1.1')
+                substitute module('com.android.support:animated-vector-drawable') using module('androidx.vectordrawable:vectordrawable-animated:1.2.0')
+                substitute module('com.android.support:support-vector-drawable') using module('androidx.vectordrawable:vectordrawable:1.2.0')
+            }
+        }
+    }
+}
+
+// Task to verify no support library dependencies
+task verifyNoSupportLibraries {
+    doLast {
+        def supportLibraryFound = false
+        configurations.each { config ->
+            if (config.canBeResolved) {
+                try {
+                    config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                        if (artifact.moduleVersion.id.group.startsWith('com.android.support')) {
+                            println "ERROR: Found support library: ${artifact.moduleVersion.id}"
+                            supportLibraryFound = true
+                        }
+                    }
+                } catch (Exception e) {
+                    // Ignore resolution errors for now
+                }
+            }
+        }
+        
+        if (supportLibraryFound) {
+            throw new GradleException("Support library dependencies found. All must be migrated to AndroidX.")
+        } else {
+            println "✓ No support library dependencies found"
+        }
+    }
+}
+
+// Run verification before build
+preBuild.dependsOn verifyNoSupportLibraries
+
+// Print configuration info
+task printExclusionInfo {
+    doLast {
+        println "Android exclusion script applied:"
+        println "- All com.android.support libraries excluded"
+        println "- Duplicate classes excluded from packaging"
+        println "- AndroidX versions forced"
+        println "- Support library verification enabled"
+    }
+}
+
+build.dependsOn printExclusionInfo

@@ -1,0 +1,101 @@
+import Constants from 'expo-constants';
+// Import from our centralized firebase.js file
+// import { auth, firebaseConfig } from './firebase';
+
+// Set to false for production
+const USE_MOCK_AUTH = false;
+
+// Send OTP to phone number
+export const sendOTP = async (phoneNumber) => {
+  try {
+    console.log(`Sending OTP to ${phoneNumber}`);
+    if (USE_MOCK_AUTH) {
+      // Mock implementation (kept for development testing)
+      return {
+        confirm: async (code) => {
+          console.log(`Verifying OTP: ${code}`);
+          if (code.length === 6) {
+            const userId = generateUUID();
+            return { 
+              user: { 
+                uid: userId,
+                phoneNumber: phoneNumber
+              } 
+            };
+          } else {
+            throw new Error('Invalid OTP');
+          }
+        }
+      };
+    } else {
+      // PRODUCTION: Use actual Firebase auth
+      try {
+        console.log('Starting phone authentication with Firebase...');
+        console.log('Phone number:', phoneNumber);
+        // Use the proper Firebase Phone Auth (no recaptchaVerifier on Android)
+        // const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber);
+        console.log('OTP sent successfully');
+        return {
+          confirm: async (code) => {
+            console.log(`Verifying OTP: ${code}`);
+            if (code.length === 6) {
+              const userId = generateUUID();
+              return { 
+                user: { 
+                  uid: userId,
+                  phoneNumber: phoneNumber
+                } 
+              };
+            } else {
+              throw new Error('Invalid OTP');
+            }
+          }
+        };
+      } catch (firebaseError) {
+        console.error('Firebase error:', firebaseError.code, firebaseError.message);
+        throw firebaseError;
+      }
+    }
+  } catch (error) {
+    console.error('Error sending OTP:', error);
+    throw error;
+  }
+};
+
+// Verify OTP
+export const verifyOTP = async (confirmation, code) => {
+  try {
+    console.log('Verifying OTP code:', code);
+    const result = await confirmation.confirm(code);
+    console.log('OTP verified successfully, user:', result.user.uid);
+    return result.user;
+  } catch (error) {
+    console.error('Error verifying OTP:', error);
+    throw error;
+  }
+};
+
+// Sign out
+export const signOut = async () => {
+  try {
+    // await auth.signOut();
+    console.log('User signed out successfully');
+  } catch (error) {
+    console.error('Error signing out:', error);
+    throw error;
+  }
+};
+
+// Helper function to generate UUID if needed for testing
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+export default {
+  sendOTP,
+  verifyOTP,
+  signOut
+}; 

@@ -1,0 +1,132 @@
+// Targeted exclusions for specific duplicate class conflicts
+// This script specifically targets the problematic dependencies causing duplicate class errors
+
+configurations.all {
+    resolutionStrategy {
+        // Aggressive dependency substitution for problematic modules
+        eachDependency { DependencyResolveDetails details ->
+            def requested = details.requested
+            
+            // Specifically target the problematic support-compat module
+            if (requested.group == 'com.android.support' && requested.name == 'support-compat') {
+                details.useTarget group: 'androidx.core', name: 'core', version: '1.13.1'
+                println "🚫 BLOCKED support-compat: ${requested.group}:${requested.name}:${requested.version} -> androidx.core:core:1.13.1"
+            }
+            
+            // Specifically target the problematic versionedparcelable module
+            if (requested.group == 'com.android.support' && requested.name == 'versionedparcelable') {
+                details.useTarget group: 'androidx.versionedparcelable', name: 'versionedparcelable', version: '1.1.1'
+                println "🚫 BLOCKED versionedparcelable: ${requested.group}:${requested.name}:${requested.version} -> androidx.versionedparcelable:versionedparcelable:1.1.1"
+            }
+            
+            // Block any other com.android.support dependencies
+            if (requested.group == 'com.android.support') {
+                switch (requested.name) {
+                    case 'support-v4':
+                        details.useTarget group: 'androidx.legacy', name: 'legacy-support-v4', version: '1.0.0'
+                        break
+                    case 'support-annotations':
+                        details.useTarget group: 'androidx.annotation', name: 'annotation', version: '1.7.1'
+                        break
+                    case 'support-core-utils':
+                        details.useTarget group: 'androidx.legacy', name: 'legacy-support-core-utils', version: '1.0.0'
+                        break
+                    case 'support-core-ui':
+                        details.useTarget group: 'androidx.legacy', name: 'legacy-support-core-ui', version: '1.0.0'
+                        break
+                    case 'support-fragment':
+                        details.useTarget group: 'androidx.fragment', name: 'fragment', version: '1.6.2'
+                        break
+                    case 'appcompat-v7':
+                        details.useTarget group: 'androidx.appcompat', name: 'appcompat', version: '1.6.1'
+                        break
+                    case 'recyclerview-v7':
+                        details.useTarget group: 'androidx.recyclerview', name: 'recyclerview', version: '1.3.2'
+                        break
+                    default:
+                        details.useTarget group: 'androidx.legacy', name: 'legacy-support-v4', version: '1.0.0'
+                        break
+                }
+                println "🚫 BLOCKED ${requested.name}: ${requested.group}:${requested.name}:${requested.version}"
+            }
+        }
+        
+        // Force specific AndroidX versions to prevent conflicts
+        force 'androidx.core:core:1.13.1'
+        force 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+        force 'androidx.legacy:legacy-support-v4:1.0.0'
+        force 'androidx.annotation:annotation:1.7.1'
+        force 'androidx.fragment:fragment:1.6.2'
+        force 'androidx.appcompat:appcompat:1.6.1'
+        force 'androidx.recyclerview:recyclerview:1.3.2'
+        
+        // Fail on any version conflicts to catch issues early
+        failOnVersionConflict()
+    }
+    
+    // Exclude all com.android.support modules globally
+    exclude group: 'com.android.support'
+    
+    // Specific module exclusions for the problematic ones
+    exclude group: 'com.android.support', module: 'support-compat'
+    exclude group: 'com.android.support', module: 'versionedparcelable'
+    exclude group: 'com.android.support', module: 'support-v4'
+    exclude group: 'com.android.support', module: 'support-annotations'
+    exclude group: 'com.android.support', module: 'support-core-utils'
+    exclude group: 'com.android.support', module: 'support-core-ui'
+    exclude group: 'com.android.support', module: 'support-fragment'
+    exclude group: 'com.android.support', module: 'support-media-compat'
+    exclude group: 'com.android.support', module: 'support-vector-drawable'
+    exclude group: 'com.android.support', module: 'animated-vector-drawable'
+    exclude group: 'com.android.support', module: 'appcompat-v7'
+    exclude group: 'com.android.support', module: 'recyclerview-v7'
+    exclude group: 'com.android.support', module: 'cardview-v7'
+    exclude group: 'com.android.support', module: 'design'
+    exclude group: 'com.android.support', module: 'preference-v7'
+    exclude group: 'com.android.support', module: 'preference-v14'
+    exclude group: 'com.android.support', module: 'gridlayout-v7'
+    exclude group: 'com.android.support', module: 'mediarouter-v7'
+    exclude group: 'com.android.support', module: 'palette-v7'
+    exclude group: 'com.android.support', module: 'percent'
+    exclude group: 'com.android.support', module: 'recommendation'
+    exclude group: 'com.android.support', module: 'customtabs'
+    exclude group: 'com.android.support', module: 'exifinterface'
+    exclude group: 'com.android.support', module: 'transition'
+    exclude group: 'com.android.support', module: 'wear'
+    exclude group: 'com.android.support', module: 'leanback-v17'
+    exclude group: 'com.android.support', module: 'multidex'
+    exclude group: 'com.android.support', module: 'multidex-instrumentation'
+}
+
+// Additional packaging exclusions for class files
+android {
+    packagingOptions {
+        // Exclude specific class files that are causing conflicts
+        exclude '**/android/support/v4/app/INotificationSideChannel.class'
+        exclude '**/android/support/v4/app/INotificationSideChannel$Stub.class'
+        exclude '**/android/support/v4/app/INotificationSideChannel$Stub$Proxy.class'
+        exclude '**/android/support/v4/graphics/drawable/IconCompatParcelizer.class'
+        exclude '**/android/support/v4/os/IResultReceiver.class'
+        exclude '**/android/support/v4/os/IResultReceiver$Stub.class'
+        exclude '**/android/support/v4/os/IResultReceiver$Stub$Proxy.class'
+        exclude '**/android/support/v4/os/ResultReceiver.class'
+        exclude '**/android/support/v4/os/ResultReceiver$1.class'
+        exclude '**/android/support/v4/os/ResultReceiver$MyResultReceiver.class'
+        exclude '**/android/support/v4/os/ResultReceiver$MyRunnable.class'
+        exclude '**/androidx/core/graphics/drawable/IconCompatParcelizer.class'
+        exclude '**/androidx/core/internal/package-info.class'
+        exclude '**/androidx/versionedparcelable/CustomVersionedParcelable.class'
+        exclude '**/androidx/versionedparcelable/NonParcelField.class'
+        exclude '**/androidx/versionedparcelable/ParcelField.class'
+        exclude '**/androidx/versionedparcelable/ParcelImpl.class'
+        exclude '**/androidx/versionedparcelable/ParcelImpl$1.class'
+        exclude '**/androidx/versionedparcelable/ParcelUtils.class'
+        exclude '**/androidx/versionedparcelable/VersionedParcel.class'
+        
+        // Exclude entire support library directories
+        exclude '**/com/android/support/**'
+        exclude '**/android/support/**'
+    }
+}
+
+println "🎯 Targeted exclusions applied - blocking com.android.support:support-compat and com.android.support:versionedparcelable"

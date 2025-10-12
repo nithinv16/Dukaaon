@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "typeRoots": [
+      "./node_modules/@types",
+      "./types"
+    ],
+    "jsx": "preserve",
+    "incremental": true,
+    "module": "esnext",
+    "isolatedModules": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "extends": "expo/tsconfig.base",
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ]
+}

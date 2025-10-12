@@ -1,0 +1,118 @@
+// Root build.gradle for dukaaon project
+// This file applies global configurations and exclusions
+
+buildscript {
+    ext {
+        buildToolsVersion = "35.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 35
+        targetSdkVersion = 35
+        kotlinVersion = "1.9.25"
+        
+        // AndroidX versions
+        androidXCoreVersion = "1.13.1"
+        androidXVersionedParcelableVersion = "1.1.1"
+        androidXVectorDrawableVersion = "1.2.0"
+    }
+    
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://www.jitpack.io' }
+    }
+    
+    // Apply global exclusions to all projects
+configurations.all {
+    // Exclude all com.android.support libraries globally
+    exclude group: 'com.android.support'
+    
+    resolutionStrategy {
+        // Force AndroidX versions
+        force "androidx.core:core:$androidXCoreVersion"
+        force "androidx.versionedparcelable:versionedparcelable:$androidXVersionedParcelableVersion"
+        force "androidx.vectordrawable:vectordrawable:$androidXVectorDrawableVersion"
+        force "androidx.vectordrawable:vectordrawable-animated:$androidXVectorDrawableVersion"
+        
+        // Fail on any support library dependency
+        eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'com.android.support') {
+                // Replace with AndroidX equivalent
+                switch (details.requested.name) {
+                    case 'support-compat':
+                        details.useTarget group: 'androidx.core', name: 'core', version: androidXCoreVersion
+                        break
+                    case 'versionedparcelable':
+                        details.useTarget group: 'androidx.versionedparcelable', name: 'versionedparcelable', version: androidXVersionedParcelableVersion
+                        break
+                    case 'animated-vector-drawable':
+                        details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable-animated', version: androidXVectorDrawableVersion
+                        break
+                    case 'support-vector-drawable':
+                        details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable', version: androidXVectorDrawableVersion
+                        break
+                    default:
+                        // For any other support library, use a generic AndroidX replacement
+                        details.useTarget group: 'androidx.legacy', name: 'legacy-support-v4', version: '1.0.0'
+                        break
+                }
+                details.because 'Migrating from support library to AndroidX'
+            }
+        }
+    }
+}
+}
+
+// Global task to verify no support libraries
+task verifyGlobalNoSupportLibraries {
+    doLast {
+        def supportLibraryFound = false
+        allprojects { project ->
+            project.configurations.each { config ->
+                if (config.canBeResolved) {
+                    try {
+                        config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                            if (artifact.moduleVersion.id.group.startsWith('com.android.support')) {
+                                println "ERROR in ${project.name}: Found support library: ${artifact.moduleVersion.id}"
+                                supportLibraryFound = true
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Ignore resolution errors
+                    }
+                }
+            }
+        }
+        
+        if (supportLibraryFound) {
+            throw new GradleException("Support library dependencies found across projects. All must be migrated to AndroidX.")
+        } else {
+            println "✓ Global verification: No support library dependencies found"
+        }
+    }
+}
+
+// Apply verification to all projects
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.preBuild.dependsOn verifyGlobalNoSupportLibraries
+        }
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}

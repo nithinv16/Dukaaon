@@ -1,0 +1,179 @@
+// EAS Cloud Build Specific Exclusions
+// This script is specifically designed for EAS cloud build environment
+
+// Apply to all projects in EAS build
+allprojects {
+    // Force specific versions to prevent conflicts
+    ext {
+        compileSdkVersion = 35
+        buildToolsVersion = "35.0.0"
+        minSdkVersion = 21
+        targetSdkVersion = 35
+    }
+    
+    // Global configuration for all projects
+    configurations.all {
+        // Exclude all support library groups completely
+        exclude group: 'com.android.support'
+        exclude group: 'android.arch.lifecycle'
+        exclude group: 'android.arch.core'
+        
+        // Resolution strategy for EAS cloud builds
+        resolutionStrategy {
+            // Force specific AndroidX versions
+            force 'androidx.core:core:1.16.0'
+            force 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+            force 'androidx.localbroadcastmanager:localbroadcastmanager:1.0.0'
+            force 'androidx.appcompat:appcompat:1.7.0'
+            force 'androidx.legacy:legacy-support-v4:1.0.0'
+            
+            // Dependency substitution for legacy libraries
+            dependencySubstitution {
+                substitute module('com.android.support:support-compat') using module('androidx.core:core:1.16.0')
+                substitute module('com.android.support:versionedparcelable') using module('androidx.versionedparcelable:versionedparcelable:1.1.1')
+                substitute module('com.android.support:localbroadcastmanager') using module('androidx.localbroadcastmanager:localbroadcastmanager:1.0.0')
+                substitute module('com.android.support:support-v4') using module('androidx.legacy:legacy-support-v4:1.0.0')
+                substitute module('com.android.support:appcompat-v7') using module('androidx.appcompat:appcompat:1.7.0')
+            }
+            
+            // Fail on version conflict to catch issues early
+            failOnVersionConflict()
+        }
+    }
+    
+    // Apply to Android projects
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                compileSdkVersion rootProject.ext.compileSdkVersion
+                buildToolsVersion rootProject.ext.buildToolsVersion
+                
+                defaultConfig {
+                    minSdkVersion rootProject.ext.minSdkVersion
+                    targetSdkVersion rootProject.ext.targetSdkVersion
+                }
+                
+                // Comprehensive packaging options for EAS builds
+                packagingOptions {
+                    // Exclude all conflicting META-INF files
+                    exclude 'META-INF/androidx.localbroadcastmanager_localbroadcastmanager.version'
+                    exclude 'META-INF/androidx.core_core.version'
+                    exclude 'META-INF/androidx.versionedparcelable_versionedparcelable.version'
+                    exclude 'META-INF/androidx.legacy_legacy-support-core-utils.version'
+                    exclude 'META-INF/androidx.legacy_legacy-support-core-ui.version'
+                    exclude 'META-INF/androidx.fragment_fragment.version'
+                    exclude 'META-INF/androidx.media_media.version'
+                    exclude 'META-INF/androidx.vectordrawable_vectordrawable-animated.version'
+                    exclude 'META-INF/androidx.vectordrawable_vectordrawable.version'
+                    exclude 'META-INF/androidx.appcompat_appcompat.version'
+                    exclude 'META-INF/androidx.recyclerview_recyclerview.version'
+                    exclude 'META-INF/androidx.cardview_cardview.version'
+                    exclude 'META-INF/com.google.android.material_material.version'
+                    
+                    // Exclude other META-INF files
+                    exclude 'META-INF/DEPENDENCIES'
+                    exclude 'META-INF/LICENSE'
+                    exclude 'META-INF/LICENSE.txt'
+                    exclude 'META-INF/license.txt'
+                    exclude 'META-INF/NOTICE'
+                    exclude 'META-INF/NOTICE.txt'
+                    exclude 'META-INF/notice.txt'
+                    exclude 'META-INF/ASL2.0'
+                    exclude 'META-INF/INDEX.LIST'
+                    exclude 'META-INF/MANIFEST.MF'
+                    
+                    // Pick first for native libraries
+                    pickFirst '**/libc++_shared.so'
+                    pickFirst '**/libjsc.so'
+                    pickFirst '**/libreactnativejni.so'
+                    pickFirst '**/libfbjni.so'
+                    pickFirst '**/libglog.so'
+                    pickFirst '**/libhermes.so'
+                    pickFirst '**/libyoga.so'
+                    
+                    // Pick first for all duplicate classes
+                    pickFirst 'android/support/v4/app/INotificationSideChannel.class'
+                    pickFirst 'android/support/v4/app/INotificationSideChannel$Stub.class'
+                    pickFirst 'android/support/v4/app/INotificationSideChannel$Stub$Proxy.class'
+                    pickFirst 'android/support/v4/graphics/drawable/IconCompatParcelizer.class'
+                    pickFirst 'android/support/v4/os/IResultReceiver.class'
+                    pickFirst 'android/support/v4/os/IResultReceiver$Stub.class'
+                    pickFirst 'android/support/v4/os/IResultReceiver$Stub$Proxy.class'
+                    pickFirst 'android/support/v4/os/ResultReceiver.class'
+                    pickFirst 'android/support/v4/os/ResultReceiver$1.class'
+                    pickFirst 'android/support/v4/os/ResultReceiver$MyResultReceiver.class'
+                    pickFirst 'android/support/v4/os/ResultReceiver$MyRunnable.class'
+                    pickFirst 'androidx/core/graphics/drawable/IconCompatParcelizer.class'
+                    pickFirst 'androidx/core/internal/package-info.class'
+                    pickFirst 'androidx/versionedparcelable/CustomVersionedParcelable.class'
+                    pickFirst 'androidx/versionedparcelable/NonParcelField.class'
+                    pickFirst 'androidx/versionedparcelable/ParcelField.class'
+                    pickFirst 'androidx/versionedparcelable/ParcelImpl.class'
+                    pickFirst 'androidx/versionedparcelable/ParcelImpl$1.class'
+                    pickFirst 'androidx/versionedparcelable/ParcelUtils.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcel.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcel$1.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcel$ParcelException.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcelParcel.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcelStream.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcelStream$FieldBuffer.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcelable.class'
+                    pickFirst 'androidx/versionedparcelable/VersionedParcelize.class'
+                }
+            }
+            
+            // Force AndroidX dependencies
+            project.dependencies {
+                implementation 'androidx.core:core:1.16.0'
+                implementation 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+                implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.0.0'
+                implementation 'androidx.appcompat:appcompat:1.7.0'
+                implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+                
+                // Exclude any transitive support library dependencies
+                configurations.all {
+                    exclude group: 'com.android.support', module: 'support-compat'
+                    exclude group: 'com.android.support', module: 'versionedparcelable'
+                    exclude group: 'com.android.support', module: 'localbroadcastmanager'
+                    exclude group: 'com.android.support', module: 'support-v4'
+                    exclude group: 'com.android.support', module: 'appcompat-v7'
+                }
+            }
+        }
+    }
+}
+
+// Task to verify no support libraries are included
+task verifyEASBuild {
+    doLast {
+        println "EAS Build: Verifying AndroidX migration..."
+        def supportLibraryFound = false
+        
+        configurations.all { config ->
+            try {
+                config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                    if (artifact.moduleVersion.id.group.startsWith('com.android.support')) {
+                        println "ERROR: Found support library in EAS build: ${artifact.moduleVersion.id}"
+                        supportLibraryFound = true
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore resolution errors during verification
+                println "Warning: Could not verify configuration ${config.name}: ${e.message}"
+            }
+        }
+        
+        if (supportLibraryFound) {
+            throw new GradleException("EAS Build Failed: Support libraries detected! All must be AndroidX.")
+        } else {
+            println "EAS Build: SUCCESS - No support libraries found."
+        }
+    }
+}
+
+// Make verification run before build tasks
+tasks.whenTaskAdded { task ->
+    if (task.name.contains('assemble') || task.name.contains('bundle')) {
+        task.dependsOn verifyEASBuild
+    }
+}

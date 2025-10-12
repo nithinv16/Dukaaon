@@ -1,0 +1,41 @@
+
+EAS Build Configuration Report
+Generated: 2025-08-30T17:11:46.450Z
+
+Environment Variables Applied:
+- ANDROID_USE_ANDROIDX: true
+- ANDROID_ENABLE_JETIFIER: false
+- ANDROID_DEPENDENCY_EXCLUDE_GROUPS: com.android.support
+- ANDROID_FORCE_ANDROIDX_ONLY: true
+- ANDROID_REJECT_SUPPORT_LIBRARIES: true
+
+Exclusion Scripts Status:
+- absolute-exclusions.gradle: PRESENT
+- nuclear-exclusions.gradle: PRESENT
+- build-verification.gradle: PRESENT
+- dependencies-exclusion.gradle: PRESENT
+- final-conflict-resolver.gradle: PRESENT
+
+Configuration Files:
+- gradle.properties: PRESENT
+- app.config.js: PRESENT
+- eas.json: PRESENT
+
+Build Hooks:
+- Pre-install hook: PRESENT
+- Post-install hook: PRESENT
+
+Target Configuration:
+- AndroidX Only: ENFORCED
+- Support Libraries: REJECTED
+- Jetifier: DISABLED
+- Strict Dependency Checking: ENABLED
+
+This configuration should eliminate all duplicate class errors related to:
+- INotificationSideChannel
+- IconCompatParcelizer
+- IResultReceiver
+- ResultReceiver
+- CustomVersionedParcelable
+- ParcelField, ParcelImpl, ParcelUtils
+- VersionedParcel conflicts

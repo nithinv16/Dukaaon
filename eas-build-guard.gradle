@@ -1,0 +1,148 @@
+// EAS Build Guard - Early Detection and Rejection of Support Libraries
+// This script runs as early as possible to catch support libraries before they cause issues
+
+println "🛡️ EAS BUILD GUARD: Activating early support library detection"
+
+// Define forbidden patterns
+def FORBIDDEN_PATTERNS = [
+    ~/.*com\.android\.support.*/,
+    ~/.*android\.arch\.lifecycle.*/,
+    ~/.*android\.arch\.core.*/,
+    ~/.*android\.arch\.persistence.*/,
+    ~/.*support-compat.*/,
+    ~/.*support-v4.*/,
+    ~/.*appcompat-v7.*/,
+    ~/.*versionedparcelable.*28\.0\.0.*/
+]
+
+// Early detection task that runs before any compilation
+task easBuildGuard {
+    description = 'Early detection and rejection of support libraries in EAS builds'
+    group = 'verification'
+    
+    doFirst {
+        println "\n🛡️ EAS BUILD GUARD: Scanning dependency tree for forbidden libraries..."
+        
+        def violations = []
+        def totalDependencies = 0
+        
+        // Check all resolvable configurations
+        project.configurations.findAll { it.canBeResolved }.each { config ->
+            try {
+                config.incoming.resolutionResult.allDependencies.each { dependency ->
+                    totalDependencies++
+                    def dependencyId = dependency.toString()
+                    
+                    FORBIDDEN_PATTERNS.each { pattern ->
+                        if (dependencyId =~ pattern) {
+                            violations.add([
+                                config: config.name,
+                                dependency: dependencyId,
+                                pattern: pattern.toString()
+                            ])
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Some configurations might not be resolvable yet
+                println "   ⚠️ Could not resolve configuration ${config.name}: ${e.message}"
+            }
+        }
+        
+        println "   📊 Total dependencies scanned: ${totalDependencies}"
+        
+        if (violations.isEmpty()) {
+            println "   ✅ BUILD GUARD PASSED: No forbidden support libraries detected"
+        } else {
+            println "   ❌ BUILD GUARD FAILED: Forbidden support libraries detected:"
+            violations.each { violation ->
+                println "      Configuration: ${violation.config}"
+                println "      Dependency: ${violation.dependency}"
+                println "      Matched pattern: ${violation.pattern}"
+                println "      ---"
+            }
+            
+            throw new GradleException("""
+🛡️ EAS BUILD GUARD FAILURE: Forbidden support libraries detected!
+
+The following support libraries were found in your dependency tree:
+${violations.collect { "  - ${it.dependency}" }.join('\n')}
+
+These libraries will cause duplicate class errors in EAS builds.
+All support libraries must be replaced with AndroidX equivalents.
+
+To fix this issue:
+1. Check your package.json for any packages that might depend on support libraries
+2. Update all React Native packages to their latest versions
+3. Ensure all native dependencies use AndroidX
+4. Run 'npx react-native-clean-project' to clean caches
+
+Build cannot continue with support libraries present.
+            """.trim())
+        }
+    }
+}
+
+// Hook into the build lifecycle - run as early as possible
+gradle.projectsEvaluated {
+    // Run before any compilation tasks
+    tasks.matching { task ->
+        task.name.startsWith('compile') ||
+        task.name.startsWith('assemble') ||
+        task.name.startsWith('bundle') ||
+        task.name.contains('DuplicateClasses') ||
+        task.name.contains('MergeResources') ||
+        task.name.contains('ProcessResources')
+    }.all { task ->
+        task.dependsOn easBuildGuard
+    }
+    
+    // Also run before preBuild if it exists
+    if (tasks.findByName('preBuild')) {
+        tasks.preBuild.dependsOn easBuildGuard
+    }
+}
+
+// Additional verification for specific problematic dependencies
+task verifySpecificDependencies {
+    description = 'Verify specific problematic dependencies are not present'
+    
+    doLast {
+        def problematicDeps = [
+            'com.android.support:support-compat:28.0.0',
+            'com.android.support:versionedparcelable:28.0.0',
+            'com.android.support:support-v4:28.0.0',
+            'com.android.support:appcompat-v7:28.0.0'
+        ]
+        
+        def found = []
+        
+        configurations.findAll { it.canBeResolved }.each { config ->
+            try {
+                config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                    def artifactId = "${artifact.moduleVersion.id.group}:${artifact.moduleVersion.id.name}:${artifact.moduleVersion.id.version}"
+                    if (problematicDeps.contains(artifactId)) {
+                        found.add(artifactId)
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore resolution errors
+            }
+        }
+        
+        if (!found.isEmpty()) {
+            throw new GradleException("Specific problematic dependencies found: ${found.join(', ')}")
+        }
+        
+        println "   ✅ No specific problematic dependencies found"
+    }
+}
+
+// Run specific verification after the main guard
+easBuildGuard.finalizedBy verifySpecificDependencies
+
+// Print configuration
+println "🛡️ EAS BUILD GUARD: Early detection system activated"
+println "   - Monitoring ${FORBIDDEN_PATTERNS.size()} forbidden patterns"
+println "   - Will fail fast on any support library detection"
+println "   - Integrated with build lifecycle"

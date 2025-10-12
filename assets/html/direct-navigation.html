@@ -1,0 +1,79 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DukaaOn Direct Navigation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        h1 {
+            color: #FF7D00;
+        }
+        .button {
+            background-color: #FF7D00;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            margin: 10px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            max-width: 300px;
+        }
+        .description {
+            margin-bottom: 30px;
+            color: #666;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>DukaaOn Direct Navigation</h1>
+    <p class="description">If the app is stuck at the splash screen, use one of these buttons to navigate directly.</p>
+    
+    <div class="container">
+        <button class="button" onclick="navigateTo('language')">Language Selection</button>
+        <button class="button" onclick="navigateTo('login')">Login Screen</button>
+        <button class="button" onclick="navigateTo('home')">Home Screen</button>
+        <button class="button" onclick="navigateTo('reset')">Reset App Data</button>
+    </div>
+
+    <script>
+        function navigateTo(screen) {
+            try {
+                switch(screen) {
+                    case 'language':
+                        window.location.href = '/(auth)/language';
+                        break;
+                    case 'login':
+                        window.location.href = '/(auth)/login';
+                        break;
+                    case 'home':
+                        window.location.href = '/(main)/home';
+                        break;
+                    case 'reset':
+                        // Clear local storage
+                        localStorage.clear();
+                        alert('App data has been reset. The app will now restart.');
+                        window.location.href = '/';
+                        break;
+                }
+            } catch(e) {
+                alert('Navigation failed: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+// process/browser polyfill for React Native
+const process = {
+  env: {},
+  nextTick: (callback, ...args) => setTimeout(() => callback(...args), 0),
+  browser: true,
+  version: '',
+  versions: {},
+  platform: 'browser',
+  title: 'browser',
+  argv: [],
+  on: () => {},
+  addListener: () => {},
+  once: () => {},
+  off: () => {},
+  removeListener: () => {},
+  removeAllListeners: () => {},
+  emit: () => {},
+  binding: () => { throw new Error('process.binding is not supported'); },
+  cwd: () => '/',
+  chdir: () => { throw new Error('process.chdir is not supported'); },
+  umask: () => 0,
+  hrtime: () => [0, 0],
+  uptime: () => 0,
+  memoryUsage: () => ({}),
+  exit: () => { throw new Error('process.exit is not supported'); },
+  kill: () => { throw new Error('process.kill is not supported'); },
+  dlopen: () => { throw new Error('process.dlopen is not supported'); },
+  pid: 0,
+  ppid: 0,
+  execPath: '',
+};
+
+module.exports = process; 

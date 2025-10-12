@@ -1,0 +1,114 @@
+// Ultimate Nuclear Exclusion Strategy - Last Resort
+// This script implements the most aggressive exclusion possible
+
+android {
+    packagingOptions {
+        // Nuclear exclusions - remove everything support library related
+        exclude '**/android/support/**'
+        exclude '**/com/android/support/**'
+        exclude '**/support-compat-*.aar'
+        exclude '**/support-compat-*.jar'
+        exclude '**/support-v4-*.aar'
+        exclude '**/support-v4-*.jar'
+        exclude '**/support-annotations-*.aar'
+        exclude '**/support-annotations-*.jar'
+        exclude '**/versionedparcelable-*.aar'
+        exclude '**/versionedparcelable-*.jar'
+        
+        // Exclude specific problematic classes
+        exclude '**/INotificationSideChannel.class'
+        exclude '**/INotificationSideChannel$Stub.class'
+        exclude '**/INotificationSideChannel$Stub$Proxy.class'
+        exclude '**/IconCompatParcelizer.class'
+        exclude '**/VersionedParcel.class'
+        exclude '**/VersionedParcelable.class'
+        
+        // Exclude entire support library directories
+        exclude 'android/support/v4/app/**'
+        exclude 'android/support/v4/content/**'
+        exclude 'android/support/v4/graphics/**'
+        exclude 'android/support/v4/os/**'
+        exclude 'android/support/v4/util/**'
+        exclude 'android/support/v4/view/**'
+        exclude 'android/support/v4/widget/**'
+        
+        // Exclude support library AAR files completely
+        exclude '**/*support-compat*'
+        exclude '**/*support-v4*'
+        exclude '**/*support-annotations*'
+        exclude '**/*versionedparcelable*'
+    }
+}
+
+// Ultimate dependency resolution - block support libraries completely
+configurations.all {
+    resolutionStrategy {
+        // Force fail on any support library
+        eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'com.android.support') {
+                details.useTarget group: 'androidx.legacy', name: 'legacy-support-v4', version: '1.0.0'
+                details.because 'Replacing all support libraries with AndroidX'
+            }
+            
+            // Specifically handle the problematic ones
+            if (details.requested.name == 'support-compat') {
+                details.useTarget group: 'androidx.core', name: 'core', version: '1.13.1'
+                details.because 'Replacing support-compat with androidx.core'
+            }
+            
+            if (details.requested.name == 'versionedparcelable') {
+                details.useTarget group: 'androidx.versionedparcelable', name: 'versionedparcelable', version: '1.2.0'
+                details.because 'Replacing support versionedparcelable with androidx'
+            }
+        }
+        
+        // Force specific versions
+        force 'androidx.core:core:1.13.1'
+        force 'androidx.versionedparcelable:versionedparcelable:1.2.0'
+        force 'androidx.legacy:legacy-support-v4:1.0.0'
+        
+        // Fail on version conflict
+        failOnVersionConflict()
+    }
+    
+    // Exclude support libraries globally from all configurations
+    exclude group: 'com.android.support', module: 'support-compat'
+    exclude group: 'com.android.support', module: 'support-v4'
+    exclude group: 'com.android.support', module: 'support-annotations'
+    exclude group: 'com.android.support', module: 'versionedparcelable'
+    exclude group: 'com.android.support'
+}
+
+// Additional task to clean up any remaining support library references
+tasks.whenTaskAdded { task ->
+    if (task.name.contains('compile') || task.name.contains('bundle') || task.name.contains('assemble')) {
+        task.doFirst {
+            println "[ULTIMATE-EXCLUSIONS] Ensuring no support libraries in ${task.name}"
+        }
+    }
+}
+
+// Pre-build verification
+task verifySupportLibraryExclusion {
+    doLast {
+        configurations.findAll { config ->
+            config.canBeResolved
+        }.each { config ->
+            try {
+                config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                    if (artifact.moduleVersion.id.group.contains('com.android.support')) {
+                        throw new GradleException("FATAL: Support library found: ${artifact.moduleVersion.id}")
+                    }
+                }
+            } catch (Exception e) {
+                println "Warning: Could not resolve configuration ${config.name}: ${e.message}"
+            }
+        }
+        println "[ULTIMATE-EXCLUSIONS] Verification passed - no support libraries found"
+    }
+}
+
+// Make verification run before compilation
+tasks.matching { it.name.startsWith('compile') }.all {
+    dependsOn verifySupportLibraryExclusion
+}

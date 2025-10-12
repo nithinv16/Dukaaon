@@ -1,0 +1,55 @@
+{
+  "name": "azure-ai-dependencies",
+  "description": "Azure AI dependencies for speech, translation, and image generation features",
+  "dependencies": {
+    "microsoft-cognitiveservices-speech-sdk": "^1.34.1",
+    "@azure/openai": "^1.0.0-beta.8",
+    "@azure/ai-translation-text": "^1.0.0",
+    "@react-native-async-storage/async-storage": "^1.19.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-native": "^0.72.0"
+  },
+  "installation_instructions": {
+    "npm": "npm install microsoft-cognitiveservices-speech-sdk @azure/openai @azure/ai-translation-text @react-native-async-storage/async-storage",
+    "yarn": "yarn add microsoft-cognitiveservices-speech-sdk @azure/openai @azure/ai-translation-text @react-native-async-storage/async-storage",
+    "expo": "expo install microsoft-cognitiveservices-speech-sdk @azure/openai @azure/ai-translation-text @react-native-async-storage/async-storage"
+  },
+  "environment_setup": {
+    "required_env_variables": [
+      "EXPO_PUBLIC_AZURE_OPENAI_API_KEY",
+    "EXPO_PUBLIC_AZURE_OPENAI_RESOURCE_NAME",
+    "EXPO_PUBLIC_AZURE_SPEECH_KEY",
+    "EXPO_PUBLIC_AZURE_SPEECH_REGION",
+    "EXPO_PUBLIC_AZURE_TRANSLATOR_KEY",
+    "EXPO_PUBLIC_AZURE_TRANSLATOR_REGION"
+    ],
+    "permissions": {
+      "android": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "ios": [
+        "NSMicrophoneUsageDescription",
+        "NSInternetUsageDescription"
+      ]
+    }
+  },
+  "azure_services_required": [
+    "Azure OpenAI Service",
+    "Azure Speech Services",
+    "Azure Translator"
+  ],
+  "features_implemented": [
+    "Speech-to-Text with regional language support",
+    "Text-to-Speech with neural voices",
+    "Real-time language translation",
+    "Voice search with intent recognition",
+    "Multi-language app interface",
+    "Voice ordering capabilities",
+    "Continuous speech recognition",
+    "Language detection and auto-translation"
+  ]
+}

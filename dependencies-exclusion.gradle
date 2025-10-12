@@ -1,0 +1,117 @@
+// Custom Gradle script for aggressive dependency exclusion and conflict resolution
+
+// Apply this script to handle namespace conflicts and dependency issues
+configurations.all {
+    resolutionStrategy {
+        // Force specific versions to resolve conflicts
+        force 'androidx.core:core:1.13.1'
+        force 'androidx.vectordrawable:vectordrawable:1.2.0'
+        force 'androidx.vectordrawable:vectordrawable-animated:1.2.0'
+        force 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+        force 'androidx.lifecycle:lifecycle-common:2.8.6'
+        force 'androidx.lifecycle:lifecycle-runtime:2.8.6'
+        force 'androidx.annotation:annotation:1.8.2'
+        
+        // Exclude all com.android.support libraries globally
+        eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'com.android.support') {
+                details.useTarget group: 'androidx.legacy', name: 'legacy-support-v4', version: '1.0.0'
+                details.because 'Migrating from support library to AndroidX'
+            }
+            
+            // Replace specific support library components with AndroidX equivalents
+            if (details.requested.group == 'com.android.support' && details.requested.name == 'animated-vector-drawable') {
+                details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable-animated', version: '1.2.0'
+            }
+            
+            if (details.requested.group == 'com.android.support' && details.requested.name == 'support-vector-drawable') {
+                details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable', version: '1.2.0'
+            }
+            
+            if (details.requested.group == 'com.android.support' && details.requested.name == 'versionedparcelable') {
+                details.useTarget group: 'androidx.versionedparcelable', name: 'versionedparcelable', version: '1.1.1'
+            }
+            
+            if (details.requested.group == 'com.android.support' && details.requested.name == 'support-compat') {
+                details.useTarget group: 'androidx.core', name: 'core', version: '1.13.1'
+            }
+        }
+        
+        // Don't fail on version conflict, resolve automatically
+        // failOnVersionConflict()
+        
+        // Prefer modules that are part of this build
+        preferProjectModules()
+        
+        // Component selection to exclude support libraries
+        componentSelection {
+            all { ComponentSelection selection ->
+                if (selection.candidate.group == 'com.android.support') {
+                    selection.reject("Support library ${selection.candidate.group}:${selection.candidate.module} is excluded in favor of AndroidX")
+                }
+            }
+        }
+        
+        // Cache dynamic versions for 24 hours
+        cacheDynamicVersionsFor 24, 'hours'
+        
+        // Cache changing modules for 24 hours
+        cacheChangingModulesFor 24, 'hours'
+    }
+    
+    // Exclude problematic transitive dependencies
+    exclude group: 'com.android.support', module: 'animated-vector-drawable'
+    exclude group: 'com.android.support', module: 'support-vector-drawable'
+    exclude group: 'com.android.support', module: 'versionedparcelable'
+    exclude group: 'com.android.support', module: 'support-compat'
+    exclude group: 'com.android.support', module: 'support-core-utils'
+    exclude group: 'com.android.support', module: 'support-core-ui'
+    exclude group: 'com.android.support', module: 'support-fragment'
+    exclude group: 'com.android.support', module: 'appcompat-v7'
+    exclude group: 'com.android.support', module: 'recyclerview-v7'
+    exclude group: 'com.android.support', module: 'cardview-v7'
+    exclude group: 'com.android.support', module: 'design'
+    
+    // Exclude duplicate namespace modules
+    exclude group: 'android.support.graphics.drawable'
+    exclude group: 'androidx.versionedparcelable', module: 'versionedparcelable-annotation'
+}
+
+// Add dependency substitution rules
+configurations.all {
+    resolutionStrategy.dependencySubstitution {
+        substitute module('com.android.support:animated-vector-drawable') using module('androidx.vectordrawable:vectordrawable-animated:1.2.0')
+        substitute module('com.android.support:support-vector-drawable') using module('androidx.vectordrawable:vectordrawable:1.2.0')
+        substitute module('com.android.support:versionedparcelable') using module('androidx.versionedparcelable:versionedparcelable:1.1.1')
+        substitute module('com.android.support:support-compat') using module('androidx.core:core:1.13.1')
+    }
+}
+
+// Print dependency resolution information
+task printDependencyInsight {
+    doLast {
+        println "Dependency resolution strategy applied:"
+        println "- Excluded all com.android.support libraries"
+        println "- Forced AndroidX versions"
+        println "- Applied dependency substitution rules"
+    }
+}
+
+// Verify no support library dependencies
+task verifyNoDuplicateNamespaces {
+    doLast {
+        configurations.each { config ->
+            if (config.canBeResolved) {
+                config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                    if (artifact.moduleVersion.id.group.startsWith('com.android.support')) {
+                        throw new GradleException("Found support library dependency: ${artifact.moduleVersion.id}")
+                    }
+                }
+            }
+        }
+        println "✓ No duplicate namespace dependencies found"
+    }
+}
+
+// Run verification after dependency resolution
+preBuild.dependsOn verifyNoDuplicateNamespaces

@@ -1,0 +1,35 @@
+
+# Firebase Third-party Authentication Configuration
+# Disabled in favor of custom access token hook approach
+# [auth.third_party.firebase]
+# enabled = true
+# project_id = "dukaaon"
+
+# Custom Access Token Hook Configuration
+# Disabled - not needed for native Supabase phone authentication
+[auth.hook.custom_access_token]
+enabled = false
+uri = "pg-functions://postgres/public/custom_access_token_hook"
+
+# Send SMS Hook Configuration
+# This hook provides custom SMS handling for OTP delivery
+[auth.hook.send_sms]
+enabled = false
+uri = "https://xcpznnkpjgyrpbvpnvit.supabase.co/functions/v1/sms-hook"
+
+[functions.check-profile]
+enabled = true
+verify_jwt = true
+import_map = "./functions/check-profile/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/check-profile/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/check-profile/*.html" ]
+
+[functions.sms-hook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sms-hook/deno.json"
+entrypoint = "./functions/sms-hook/index.ts"

@@ -1,0 +1,210 @@
+// Nuclear Exclusions - Complete elimination of support libraries
+// This script uses the most aggressive approach to prevent any support library inclusion
+
+// Apply before any other configuration
+project.beforeEvaluate {
+    println "🚀 Nuclear Exclusions: Applying complete support library elimination"
+    
+    // Global exclusion at project level
+    project.configurations.all { config ->
+        config.exclude group: 'com.android.support'
+        config.exclude group: 'com.android.support', module: 'support-compat'
+        config.exclude group: 'com.android.support', module: 'versionedparcelable'
+        config.exclude group: 'com.android.support', module: 'support-core-utils'
+        config.exclude group: 'com.android.support', module: 'support-core-ui'
+        config.exclude group: 'com.android.support', module: 'support-fragment'
+        config.exclude group: 'com.android.support', module: 'support-annotations'
+        config.exclude group: 'com.android.support', module: 'animated-vector-drawable'
+        config.exclude group: 'com.android.support', module: 'support-vector-drawable'
+        config.exclude group: 'com.android.support', module: 'support-media-compat'
+        config.exclude group: 'com.android.support', module: 'support-v4'
+        config.exclude group: 'com.android.support', module: 'appcompat-v7'
+        config.exclude group: 'com.android.support', module: 'design'
+        config.exclude group: 'com.android.support', module: 'recyclerview-v7'
+        config.exclude group: 'com.android.support', module: 'cardview-v7'
+        
+        config.resolutionStrategy {
+            // Force specific AndroidX versions
+            force 'androidx.core:core:1.13.1'
+            force 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+            force 'androidx.vectordrawable:vectordrawable:1.2.0'
+            force 'androidx.vectordrawable:vectordrawable-animated:1.2.0'
+            force 'androidx.appcompat:appcompat:1.7.0'
+            force 'com.google.android.material:material:1.12.0'
+            
+            // Completely reject any support library
+            componentSelection {
+                all { ComponentSelection selection ->
+                    if (selection.candidate.group.startsWith('com.android.support')) {
+                        selection.reject("Support library ${selection.candidate.group}:${selection.candidate.module}:${selection.candidate.version} is completely banned")
+                    }
+                }
+            }
+            
+            // Replace support libraries with AndroidX
+            eachDependency { DependencyResolveDetails details ->
+                if (details.requested.group == 'com.android.support') {
+                    switch (details.requested.name) {
+                        case 'support-compat':
+                            details.useTarget group: 'androidx.core', name: 'core', version: '1.13.1'
+                            break
+                        case 'versionedparcelable':
+                            details.useTarget group: 'androidx.versionedparcelable', name: 'versionedparcelable', version: '1.1.1'
+                            break
+                        case 'animated-vector-drawable':
+                            details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable-animated', version: '1.2.0'
+                            break
+                        case 'support-vector-drawable':
+                            details.useTarget group: 'androidx.vectordrawable', name: 'vectordrawable', version: '1.2.0'
+                            break
+                        case 'appcompat-v7':
+                            details.useTarget group: 'androidx.appcompat', name: 'appcompat', version: '1.7.0'
+                            break
+                        default:
+                            details.useTarget group: 'androidx.core', name: 'core', version: '1.13.1'
+                            break
+                    }
+                    details.because "Nuclear exclusion: Replacing ${details.requested.group}:${details.requested.name} with AndroidX"
+                }
+            }
+            
+            // Fail on any version conflict
+            failOnVersionConflict()
+        }
+    }
+}
+
+// Apply to Android configuration
+android {
+    packagingOptions {
+        // Nuclear exclusion of all support library files
+        exclude '**/com/android/support/**'
+        exclude '**/android/support/**'
+        exclude 'com/android/support/**'
+        exclude 'android/support/**'
+        
+        // Exclude specific AAR files
+        exclude '**/support-compat-*.aar'
+        exclude '**/versionedparcelable-28.*.aar'
+        exclude '**/support-*.aar'
+        
+        // Exclude specific class files mentioned in error
+        exclude 'android/support/v4/app/INotificationSideChannel.class'
+        exclude 'android/support/v4/app/INotificationSideChannel$Stub.class'
+        exclude 'android/support/v4/app/INotificationSideChannel$Stub$Proxy.class'
+        exclude 'android/support/v4/graphics/drawable/IconCompatParcelizer.class'
+        exclude 'android/support/v4/os/IResultReceiver.class'
+        exclude 'android/support/v4/os/IResultReceiver$Stub.class'
+        exclude 'android/support/v4/os/IResultReceiver$Stub$Proxy.class'
+        exclude 'android/support/v4/os/ResultReceiver.class'
+        exclude 'android/support/v4/os/ResultReceiver$1.class'
+        exclude 'android/support/v4/os/ResultReceiver$MyResultReceiver.class'
+        exclude 'android/support/v4/os/ResultReceiver$MyRunnable.class'
+        exclude 'androidx/core/internal/package-info.class'
+        
+        // Exclude versionedparcelable duplicates
+        exclude 'androidx/versionedparcelable/CustomVersionedParcelable.class'
+        exclude 'androidx/versionedparcelable/NonParcelField.class'
+        exclude 'androidx/versionedparcelable/ParcelField.class'
+        exclude 'androidx/versionedparcelable/ParcelImpl.class'
+        exclude 'androidx/versionedparcelable/ParcelImpl$1.class'
+        exclude 'androidx/versionedparcelable/ParcelUtils.class'
+        exclude 'androidx/versionedparcelable/VersionedParcel.class'
+        exclude 'androidx/versionedparcelable/VersionedParcel$1.class'
+        
+        // Exclude META-INF files
+        exclude 'META-INF/com.android.support_*.version'
+        exclude 'META-INF/androidx.*.version'
+        
+        // Pick first for any remaining conflicts
+        pickFirst '**/INotificationSideChannel.class'
+        pickFirst '**/IconCompatParcelizer.class'
+        pickFirst '**/IResultReceiver.class'
+        pickFirst '**/ResultReceiver.class'
+        pickFirst '**/CustomVersionedParcelable.class'
+        pickFirst '**/VersionedParcel.class'
+        pickFirst '**/ParcelImpl.class'
+        pickFirst '**/ParcelUtils.class'
+        pickFirst '**/NonParcelField.class'
+        pickFirst '**/ParcelField.class'
+        
+        // Merge manifests
+        merge '**/AndroidManifest.xml'
+    }
+    
+    lintOptions {
+        disable 'InvalidPackage'
+        disable 'GradleCompatible'
+        disable 'NewerVersionAvailable'
+        disable 'DuplicatePlatformClasses'
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+// Task to verify nuclear exclusions
+task nuclearVerification {
+    doLast {
+        println "🔍 Nuclear Verification: Checking for any support library remnants..."
+        
+        def supportLibrariesFound = []
+        def conflictingArtifacts = []
+        
+        configurations.each { config ->
+            if (config.canBeResolved) {
+                try {
+                    config.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                        def moduleId = artifact.moduleVersion.id
+                        if (moduleId.group.startsWith('com.android.support')) {
+                            supportLibrariesFound.add("${moduleId.group}:${moduleId.name}:${moduleId.version}")
+                            conflictingArtifacts.add(artifact.file.name)
+                        }
+                    }
+                } catch (Exception e) {
+                    // Ignore resolution errors
+                }
+            }
+        }
+        
+        if (!supportLibrariesFound.isEmpty()) {
+            println "❌ NUCLEAR VERIFICATION FAILED!"
+            println "Support libraries still found:"
+            supportLibrariesFound.each { lib ->
+                println "   - ${lib}"
+            }
+            println "Conflicting artifacts:"
+            conflictingArtifacts.each { artifact ->
+                println "   - ${artifact}"
+            }
+            throw new GradleException("Nuclear exclusions failed. Support libraries are still present: ${supportLibrariesFound.join(', ')}")
+        } else {
+            println "✅ NUCLEAR VERIFICATION PASSED!"
+            println "   ✓ No support library dependencies found"
+            println "   ✓ All conflicts eliminated"
+            println "   ✓ AndroidX migration complete"
+        }
+    }
+}
+
+// Task to force clean all support library artifacts
+task nuclearClean(type: Delete) {
+    delete fileTree(dir: 'build', include: '**/support-compat-*.aar')
+    delete fileTree(dir: 'build', include: '**/versionedparcelable-28.*.aar')
+    delete fileTree(dir: 'build', include: '**/com/android/support/**')
+    delete fileTree(dir: 'build', include: '**/android/support/**')
+    delete fileTree(dir: 'build/intermediates', include: '**/*support*/**')
+    delete fileTree(dir: '.gradle/caches', include: '**/com.android.support/**')
+    delete fileTree(dir: '.gradle/caches', include: '**/support-compat/**')
+    delete fileTree(dir: '.gradle/caches', include: '**/versionedparcelable-28.**')
+    
+    doLast {
+        println "🧹 Nuclear clean completed - All support library artifacts removed"
+    }
+}
+
+// Apply nuclear verification and cleaning
+preBuild.dependsOn nuclearClean
+preBuild.dependsOn nuclearVerification
+nuclearVerification.mustRunAfter nuclearClean
+
+println "☢️ Nuclear Exclusions loaded - Support libraries will be completely eliminated"

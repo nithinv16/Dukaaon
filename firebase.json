@@ -1,0 +1,17 @@
+{
+  "functions": {
+    "source": "firebase/functions",
+    "predeploy": [
+      "npm --prefix firebase/functions run build"
+    ],
+    "runtime": "nodejs18"
+  },
+  "emulators": {
+    "functions": {
+      "port": 5001
+    },
+    "ui": {
+      "enabled": true
+    }
+  }
+}

@@ -1,0 +1,432 @@
+{
+  "name": "AI Stock Ordering Agent - Main Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "voice-order",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Voice Order Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "voice-order-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate input data\nconst inputData = $input.first().json;\nconst { input: userInput, sessionId, currentOrder } = inputData;\n\n// Initialize session if not exists\nif (!sessionId) {\n  throw new Error('Session ID is required');\n}\n\n// Prepare data for next nodes\nreturn [{\n  json: {\n    userInput: userInput || '',\n    sessionId: sessionId,\n    currentOrder: currentOrder || { items: [], total: 0 },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an AI assistant for a wholesale stock ordering system. Your job is to:\n1. Analyze user input for ordering intent\n2. Extract product names and quantities\n3. Identify the action type (add_item, remove_item, modify_quantity, confirm_order, check_cart, cancel_order)\n4. Handle unclear requests by asking for clarification\n\nRespond ONLY in valid JSON format with this structure:\n{\n  \"intent\": \"add_item|remove_item|modify_quantity|confirm_order|check_cart|cancel_order|clarification_needed\",\n  \"products\": [\n    {\n      \"name\": \"product name\",\n      \"quantity\": number,\n      \"unit\": \"kg|liter|piece|box\"\n    }\n  ],\n  \"clarification\": \"question to ask user if intent is unclear\",\n  \"confidence\": 0.0-1.0\n}"
+            },
+            {
+              "role": "user",
+              "content": "={{$json.userInput}}"
+            }
+          ]
+        }
+      },
+      "id": "intent-analysis",
+      "name": "Analyze Intent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and prepare for product search\nconst aiResponse = $input.first().json;\nlet parsedIntent;\n\ntry {\n  // Extract JSON from OpenAI response\n  const content = aiResponse.choices[0].message.content;\n  parsedIntent = JSON.parse(content);\n} catch (error) {\n  // Fallback parsing if JSON is malformed\n  parsedIntent = {\n    intent: 'clarification_needed',\n    clarification: 'I could not understand your request. Please try again.',\n    confidence: 0.1\n  };\n}\n\n// Get session data\nconst sessionData = $('Validate Input').first().json;\n\nreturn [{\n  json: {\n    ...sessionData,\n    intent: parsedIntent.intent,\n    products: parsedIntent.products || [],\n    clarification: parsedIntent.clarification,\n    confidence: parsedIntent.confidence || 0.5\n  }\n}];"
+      },
+      "id": "parse-intent",
+      "name": "Parse Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "add-item",
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "add_item",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "remove-item",
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "remove_item",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "confirm-order",
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "confirm_order",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "check-cart",
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "check_cart",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "fallbackOutput": "clarification"
+      },
+      "id": "route-intent",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    p.*,\n    CASE \n        WHEN p.stock_quantity > 0 THEN 'available'\n        ELSE 'out_of_stock'\n    END as availability,\n    similarity(p.name, $1) as name_similarity\nFROM products p\nWHERE \n    similarity(p.name, $1) > 0.3\n    OR p.name ILIKE '%' || $1 || '%'\n    OR $1 = ANY(p.keywords)\nORDER BY \n    CASE WHEN $1 = ANY(p.keywords) THEN 1 ELSE 0 END DESC,\n    name_similarity DESC,\n    p.name\nLIMIT 5;",
+        "values": "={{$json.products[0].name}}"
+      },
+      "id": "search-products",
+      "name": "Search Products",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process product search results and update cart\nconst searchResults = $input.all();\nconst intentData = $('Parse Intent').first().json;\nconst requestedProducts = intentData.products;\n\nlet cartUpdates = [];\nlet unavailableProducts = [];\nlet foundProducts = [];\n\n// Process each requested product\nrequestProducts.forEach(requestedProduct => {\n  const searchResult = searchResults.find(result => \n    result.json.name_similarity > 0.5 || \n    result.json.name.toLowerCase().includes(requestedProduct.name.toLowerCase())\n  );\n  \n  if (searchResult && searchResult.json.availability === 'available') {\n    foundProducts.push({\n      id: searchResult.json.id,\n      name: searchResult.json.name,\n      price: searchResult.json.price,\n      requestedQuantity: requestedProduct.quantity,\n      unit: requestedProduct.unit,\n      availableStock: searchResult.json.stock_quantity\n    });\n  } else if (searchResult) {\n    unavailableProducts.push({\n      requestedName: requestedProduct.name,\n      actualName: searchResult.json.name,\n      reason: 'out_of_stock'\n    });\n  } else {\n    unavailableProducts.push({\n      requestedName: requestedProduct.name,\n      reason: 'not_found'\n    });\n  }\n});\n\n// Update current cart\nlet updatedCart = [...intentData.currentOrder.items];\n\nfoundProducts.forEach(product => {\n  const existingItemIndex = updatedCart.findIndex(item => item.id === product.id);\n  \n  if (existingItemIndex >= 0) {\n    updatedCart[existingItemIndex].quantity += product.requestedQuantity;\n  } else {\n    updatedCart.push({\n      id: product.id,\n      name: product.name,\n      quantity: product.requestedQuantity,\n      unitPrice: product.price,\n      unit: product.unit\n    });\n  }\n});\n\n// Calculate total\nconst total = updatedCart.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);\n\nreturn [{\n  json: {\n    sessionId: intentData.sessionId,\n    updatedCart: {\n      items: updatedCart,\n      total: total\n    },\n    foundProducts: foundProducts,\n    unavailableProducts: unavailableProducts,\n    action: 'cart_updated'\n  }\n}];"
+      },
+      "id": "update-cart",
+      "name": "Update Cart",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a friendly AI assistant for a wholesale ordering system. Generate a natural, conversational response based on the cart update results. Include:\n\n1. Confirmation of successfully added items\n2. Mention any unavailable or out-of-stock items\n3. Current cart summary with total\n4. Ask if they want to add more items or proceed to checkout\n\nKeep the tone professional but friendly. Use Indian Rupees (₹) for pricing."
+            },
+            {
+              "role": "user",
+              "content": "Cart Update Results:\nFound Products: {{$json.foundProducts}}\nUnavailable Products: {{$json.unavailableProducts}}\nUpdated Cart: {{$json.updatedCart}}\n\nGenerate a response for the customer."
+            }
+          ]
+        }
+      },
+      "id": "generate-response",
+      "name": "Generate Response",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle cart check request\nconst intentData = $('Parse Intent').first().json;\nconst currentCart = intentData.currentOrder;\n\nif (!currentCart.items || currentCart.items.length === 0) {\n  return [{\n    json: {\n      sessionId: intentData.sessionId,\n      response: \"Your cart is currently empty. Would you like to add some items?\",\n      cart: currentCart,\n      action: 'cart_checked'\n    }\n  }];\n}\n\n// Generate cart summary\nlet cartSummary = \"Here's what's in your cart:\\n\\n\";\ncurrentCart.items.forEach((item, index) => {\n  cartSummary += `${index + 1}. ${item.name} - ${item.quantity} ${item.unit || 'units'} @ ₹${item.unitPrice} each = ₹${item.quantity * item.unitPrice}\\n`;\n});\n\ncartSummary += `\\nTotal: ₹${currentCart.total}\\n\\nWould you like to add more items or confirm this order?\";\n\nreturn [{\n  json: {\n    sessionId: intentData.sessionId,\n    response: cartSummary,\n    cart: currentCart,\n    action: 'cart_checked'\n  }\n}];"
+      },
+      "id": "check-cart",
+      "name": "Check Cart",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO orders (user_id, status, total_amount, order_data, created_at) \nVALUES ($1, 'confirmed', $2, $3, NOW()) \nRETURNING id, created_at;",
+        "values": "={{$json.sessionId}},={{$json.currentOrder.total}},={{JSON.stringify($json.currentOrder)}}"
+      },
+      "id": "save-order",
+      "name": "Save Order",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 600]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "+918089668552"
+            },
+            {
+              "name": "text",
+              "value": "🛒 NEW ORDER RECEIVED!\n\nOrder ID: {{$('Save Order').first().json.id}}\nCustomer: {{$json.sessionId}}\nItems: {{$json.currentOrder.items.length}}\nTotal: ₹{{$json.currentOrder.total}}\nTime: {{$('Save Order').first().json.created_at}}\n\n📋 Order Details:\n{{$json.currentOrder.items.map(item => `• ${item.name} - ${item.quantity} ${item.unit} @ ₹${item.unitPrice}`).join('\\n')}}\n\n✅ Please confirm this order."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notify-wholesaler",
+      "name": "Notify Wholesaler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate order confirmation response\nconst orderData = $('Save Order').first().json;\nconst intentData = $('Parse Intent').first().json;\n\nconst confirmationMessage = `🎉 Order Confirmed!\n\nOrder ID: ${orderData.id}\nTotal: ₹${intentData.currentOrder.total}\nItems: ${intentData.currentOrder.items.length}\n\nYour order has been sent to our wholesaler and you'll receive a confirmation call shortly.\n\nThank you for your order!`;\n\nreturn [{\n  json: {\n    sessionId: intentData.sessionId,\n    response: confirmationMessage,\n    orderId: orderData.id,\n    action: 'order_confirmed',\n    cart: { items: [], total: 0 } // Clear cart after confirmation\n  }\n}];"
+      },
+      "id": "confirm-order",
+      "name": "Confirm Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle clarification needed\nconst intentData = $('Parse Intent').first().json;\n\nconst clarificationResponse = intentData.clarification || \n  \"I didn't quite understand that. Could you please tell me what products you'd like to order? For example, you can say 'I need 5 kg rice and 2 liters oil'.\";\n\nreturn [{\n  json: {\n    sessionId: intentData.sessionId,\n    response: clarificationResponse,\n    cart: intentData.currentOrder,\n    action: 'clarification_needed'\n  }\n}];"
+      },
+      "id": "handle-clarification",
+      "name": "Handle Clarification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 800]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "final-response",
+      "name": "Final Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "webhook-trigger": {
+      "main": [
+        [
+          {
+            "node": "validate-input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate-input": {
+      "main": [
+        [
+          {
+            "node": "intent-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "intent-analysis": {
+      "main": [
+        [
+          {
+            "node": "parse-intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse-intent": {
+      "main": [
+        [
+          {
+            "node": "route-intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "route-intent": {
+      "main": [
+        [
+          {
+            "node": "search-products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "save-order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "check-cart",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "handle-clarification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search-products": {
+      "main": [
+        [
+          {
+            "node": "update-cart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-cart": {
+      "main": [
+        [
+          {
+            "node": "generate-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "generate-response": {
+      "main": [
+        [
+          {
+            "node": "final-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-cart": {
+      "main": [
+        [
+          {
+            "node": "final-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "save-order": {
+      "main": [
+        [
+          {
+            "node": "notify-wholesaler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notify-wholesaler": {
+      "main": [
+        [
+          {
+            "node": "confirm-order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "confirm-order": {
+      "main": [
+        [
+          {
+            "node": "final-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "handle-clarification": {
+      "main": [
+        [
+          {
+            "node": "final-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-stock-ordering-instance"
+  },
+  "id": "ai-stock-ordering-workflow",
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ai-agent",
+      "name": "AI Agent"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ordering",
+      "name": "Ordering"
+    }
+  ]
+}

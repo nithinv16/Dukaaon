@@ -1,0 +1,9 @@
+
+{
+  "name": "hermes-fix",
+  "version": "1.0.0",
+  "description": "Fix for Hermes engine require property error",
+  "main": "index.js",
+  "author": "",
+  "license": "ISC"
+}
