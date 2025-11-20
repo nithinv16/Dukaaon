@@ -1,0 +1,16 @@
+{
+  "name": "DukaaOn",
+  "short_name": "DukaaOn",
+  "description": "Tech-Enabled Distribution Platform for Rural India",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#FF6B35",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}
