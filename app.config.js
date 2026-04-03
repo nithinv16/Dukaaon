@@ -196,14 +196,14 @@ const expoConfig = {
     awsBedrockApiKey: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY,
     awsBedrockApiKeyName: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY_NAME,
     // Firebase config moved to extra
-    firebaseApiKey: process.env.FIREBASE_API_KEY || "AIzaSyANRnyoh-2f7i-vojt0Adm2w1rlPHyoZQQ",
+    firebaseApiKey: process.env.FIREBASE_API_KEY || "AIzaSyA",
     firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || "dukaaon.firebaseapp.com",
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || "dukaaon",
     firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET || "dukaaon.firebasestorage.app",
     firebaseMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "65500862893",
-    firebaseAppId: process.env.FIREBASE_APP_ID || "1:65500862893:android:6a09ec9c33c6d770032924",
-    firebaseSHA1: "7F:F7:22:7E:85:44:45:6B:5A:53:63:18:AF:D1:DD:5D:EC:9F:B0:2B",
-    firebaseSHA256: "99:21:9E:F9:6E:B3:A7:12:CB:49:42:C0:55:77:FE:D8:C3:1E:A0:0B:DE:8D:AA:C2:D4:1A:BC:6C:9B:CE:86:2A",
+    firebaseAppId: process.env.FIREBASE_APP_ID || "1:65500862893:android:6a09ec9c33c6d77924",
+    firebaseSHA1: "7F:F7:22:7E:85:44:45:6B:5A:53:63:18:AF:D1:DD:5D",
+    firebaseSHA256: "99:21:9E:F9:6E:B3:A7:12:CB:49:42:C0:55:77:FE:D8:C3:1E:A0:0",
     // Add phone auth settings
     firebasePhoneAuthSettings: {
       defaultCountry: "IN",
