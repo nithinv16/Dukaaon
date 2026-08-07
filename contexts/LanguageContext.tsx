@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSettingsStore } from '../store/settings';
 import { supabase } from '../services/supabase/supabase';
 import { getCurrentUser } from '../services/auth/authService';
+import { useAuthStore } from '../store/auth';
+import { subscribeToAuthChanges } from '../utils/authSync';
 
 // Language types
 export type SupportedLanguage = 'en' | 'hi' | 'ml' | 'ta' | 'te' | 'kn' | 'mr' | 'bn';
@@ -29,6 +31,7 @@ interface LanguageContextType {
   currentLanguage: SupportedLanguage;
   availableLanguages: LanguageInfo[];
   isLoading: boolean;
+  isLanguageReady: boolean; // True when language has been loaded from storage
   changeLanguage: (language: SupportedLanguage) => Promise<void>;
   translate: (text: string, targetLanguage?: SupportedLanguage) => Promise<string>;
   translateText: (text: string) => Promise<string>;
@@ -69,13 +72,16 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 // Provider component
 export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
-  const [isLoading, setIsLoading] = useState(false);
-  const [translationCache, setTranslationCache] = useState<TranslationCache>({});
-  
-  const { setLanguage } = useSettingsStore();
+  // Get initial language from settings store (Zustand loads faster than AsyncStorage)
+  const { setLanguage, language: settingsLanguage } = useSettingsStore();
 
-  // Initialize language from storage
+  // Use settings store language as initial value - this is available synchronously!
+  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(settingsLanguage || 'en');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLanguageReady, setIsLanguageReady] = useState(false); // Track when language is loaded
+  const [translationCache, setTranslationCache] = useState<TranslationCache>({});
+
+  // Initialize language from storage - runs immediately on mount
   useEffect(() => {
     initializeLanguage();
     loadTranslationCache();
@@ -83,13 +89,31 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const initializeLanguage = async () => {
     try {
+      // First check if settings store already has a language (loads faster)
+      const storeLanguage = useSettingsStore.getState().language;
+      if (storeLanguage && storeLanguage !== 'en' && SUPPORTED_LANGUAGES.find(lang => lang.code === storeLanguage)) {
+        console.log(`[LanguageContext] Using language from settings store: ${storeLanguage}`);
+        setCurrentLanguage(storeLanguage as SupportedLanguage);
+      }
+
+      // Then check AsyncStorage for the authoritative value
       const storedLanguage = await AsyncStorage.getItem(STORAGE_KEYS.CURRENT_LANGUAGE);
+      console.log(`[LanguageContext] Loaded language from AsyncStorage: ${storedLanguage}`);
       if (storedLanguage && SUPPORTED_LANGUAGES.find(lang => lang.code === storedLanguage)) {
         setCurrentLanguage(storedLanguage as SupportedLanguage);
         setLanguage(storedLanguage as SupportedLanguage);
+        console.log(`[LanguageContext] Set currentLanguage to: ${storedLanguage}`);
+      } else if (storeLanguage && storeLanguage !== 'en') {
+        // AsyncStorage doesn't have it, but settings store does - sync them
+        await AsyncStorage.setItem(STORAGE_KEYS.CURRENT_LANGUAGE, storeLanguage);
+        console.log(`[LanguageContext] Synced AsyncStorage with settings store: ${storeLanguage}`);
       }
     } catch (error) {
       console.error('Error loading language from storage:', error);
+    } finally {
+      // Mark language as ready regardless of success/failure
+      setIsLanguageReady(true);
+      console.log('[LanguageContext] Language initialization complete');
     }
   };
 
@@ -138,6 +162,59 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, []);
 
+  // Sync language to profiles table when user becomes authenticated
+  useEffect(() => {
+    const syncLanguageToProfile = async (user: any) => {
+      try {
+        if (!user?.id) {
+          return; // No authenticated user yet
+        }
+
+        // Get current language from AsyncStorage (the source of truth)
+        const storedLanguage = await AsyncStorage.getItem(STORAGE_KEYS.CURRENT_LANGUAGE);
+        if (!storedLanguage) {
+          return; // No language preference stored
+        }
+
+        // Check if profile already has this language (avoid unnecessary updates)
+        if (user.language === storedLanguage) {
+          return; // Already synced
+        }
+
+        // Update language in profiles table
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ language: storedLanguage as SupportedLanguage })
+          .eq('id', user.id);
+
+        if (updateError) {
+          console.error('Error syncing language to profiles table:', updateError);
+        } else {
+          console.log(`Language synced to profiles table for user ${user.id}: ${storedLanguage}`);
+        }
+      } catch (error) {
+        console.error('Error in syncLanguageToProfile:', error);
+      }
+    };
+
+    // Subscribe to auth store changes to detect when user becomes authenticated
+    const unsubscribe = subscribeToAuthChanges((user) => {
+      if (user?.id) {
+        syncLanguageToProfile(user);
+      }
+    });
+
+    // Also check immediately in case user is already authenticated
+    const currentUser = useAuthStore.getState().user;
+    if (currentUser?.id) {
+      syncLanguageToProfile(currentUser);
+    }
+
+    return () => {
+      unsubscribe();
+    };
+  }, []); // Run once on mount
+
   const changeLanguage = useCallback(async (language: SupportedLanguage) => {
     if (language === currentLanguage) return;
 
@@ -152,18 +229,31 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       // Update language in profiles table
       try {
-        const user = await getCurrentUser();
-        if (user && user.id) {
+        // Try to get user ID from auth store first (more reliable)
+        const authStoreUser = useAuthStore.getState().user;
+        let userId: string | null = null;
+
+        if (authStoreUser?.id) {
+          userId = authStoreUser.id;
+        } else {
+          // Fallback to getCurrentUser if auth store doesn't have user
+          const user = await getCurrentUser();
+          if (user?.id) {
+            userId = user.id;
+          }
+        }
+
+        if (userId) {
           const { error: updateError } = await supabase
             .from('profiles')
             .update({ language: language })
-            .eq('id', user.id);
+            .eq('id', userId);
 
           if (updateError) {
             console.error('Error updating language in profiles table:', updateError);
             // Don't throw here - we want the language change to succeed locally even if DB update fails
           } else {
-            console.log(`Language updated in profiles table for user ${user.id}: ${language}`);
+            console.log(`Language updated in profiles table for user ${userId}: ${language}`);
           }
         } else {
           console.warn('No authenticated user found, skipping database language update');
@@ -223,7 +313,7 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const translate = useCallback(async (text: string, targetLanguage?: SupportedLanguage): Promise<string> => {
     const target = targetLanguage || currentLanguage;
-    
+
     // Return original text if target is English or same as source
     if (target === 'en' || !text.trim()) {
       return text;
@@ -278,11 +368,24 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     currentLanguage,
     availableLanguages: SUPPORTED_LANGUAGES,
     isLoading,
+    isLanguageReady,
     changeLanguage,
     translate,
     translateText,
     clearTranslationCache,
   };
+
+  // Don't render children until language is ready to prevent flash-to-English
+  // This ensures components get the correct language on first render
+  if (!isLanguageReady) {
+    // Return provider with null children to prevent context errors
+    // The brief delay (typically <100ms) is better than showing wrong translations
+    return (
+      <LanguageContext.Provider value={contextValue}>
+        {null}
+      </LanguageContext.Provider>
+    );
+  }
 
   return (
     <LanguageContext.Provider value={contextValue}>
@@ -291,11 +394,26 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
   );
 };
 
+// Default context value for when provider is not yet mounted (during initial render)
+const DEFAULT_LANGUAGE_CONTEXT: LanguageContextType = {
+  currentLanguage: 'en',
+  availableLanguages: SUPPORTED_LANGUAGES,
+  isLoading: false,
+  isLanguageReady: false,
+  changeLanguage: async () => { console.warn('[useLanguage] Provider not ready, changeLanguage ignored'); },
+  translate: async (text: string) => text,
+  translateText: async (text: string) => text,
+  clearTranslationCache: async () => { console.warn('[useLanguage] Provider not ready, clearTranslationCache ignored'); },
+};
+
 // Hook to use language context
 export const useLanguage = (): LanguageContextType => {
   const context = useContext(LanguageContext);
   if (!context) {
-    throw new Error('useLanguage must be used within a LanguageProvider');
+    // During initial render, context might not be available yet
+    // Return default values instead of crashing to handle race conditions
+    console.warn('[useLanguage] Context not available, using default values. This may happen during initial render.');
+    return DEFAULT_LANGUAGE_CONTEXT;
   }
   return context;
 };

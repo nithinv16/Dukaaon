@@ -47,7 +47,7 @@ export default function CustomerManagement() {
   const user = useAuthStore((state) => state.user);
   const { currentLanguage } = useLanguage();
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start false - will be true only when actually fetching
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -157,13 +157,19 @@ export default function CustomerManagement() {
   }, [currentLanguage]);
 
   useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID
+    if (!user?.id) {
+      console.log('CustomerManagement: Waiting for user ID...');
+      return;
+    }
+    console.log('CustomerManagement: Fetching customers for user:', user.id);
     fetchCustomers();
-  }, []);
+  }, [user?.id]);
 
   const fetchCustomers = async () => {
     try {
       console.log('Fetching customers for seller:', user?.id);
-      
+
       // Fetch customers from the customers table
       const { data: customersData, error } = await supabase
         .from('customers')
@@ -189,8 +195,8 @@ export default function CustomerManagement() {
         owner_name: customer.owner_name || '',
         phone_number: customer.phone_number,
         email: customer.email || '',
-        address: typeof customer.address === 'object' ? 
-          Object.values(customer.address).filter(Boolean).join(', ') : 
+        address: typeof customer.address === 'object' ?
+          Object.values(customer.address).filter(Boolean).join(', ') :
           customer.address || '',
         location_address: customer.location_address,
         latitude: customer.latitude,
@@ -218,110 +224,110 @@ export default function CustomerManagement() {
     }
   };
 
-// Add Customer Form Component
-const AddCustomerForm = ({ onSubmit, onCancel }: { onSubmit: (data: any) => void; onCancel: () => void }) => {
-  const [formData, setFormData] = useState({
-    business_name: '',
-    owner_name: '',
-    phone_number: '',
-    email: '',
-    address: '',
-    location_address: '',
-    credit_limit: '',
-    payment_terms: 'cash',
-    discount_percentage: '',
-    notes: ''
-  });
-
-  const handleSubmit = () => {
-    if (!formData.business_name || !formData.owner_name || !formData.phone_number) {
-      alert('Please fill in all required fields (Business Name, Owner Name, Phone Number)');
-      return;
-    }
-
-    onSubmit({
-      ...formData,
-      credit_limit: parseFloat(formData.credit_limit) || 0,
-      discount_percentage: parseFloat(formData.discount_percentage) || 0
+  // Add Customer Form Component
+  const AddCustomerForm = ({ onSubmit, onCancel }: { onSubmit: (data: any) => void; onCancel: () => void }) => {
+    const [formData, setFormData] = useState({
+      business_name: '',
+      owner_name: '',
+      phone_number: '',
+      email: '',
+      address: '',
+      location_address: '',
+      credit_limit: '',
+      payment_terms: 'cash',
+      discount_percentage: '',
+      notes: ''
     });
-  };
 
-  return (
-    <View style={styles.formContainer}>
-      <TextInput
-        label={translations.businessName}
-        value={formData.business_name}
-        onChangeText={(text) => setFormData({ ...formData, business_name: text })}
-        style={styles.formInput}
-        mode="outlined"
-      />
-      <TextInput
-        label={translations.ownerName}
-        value={formData.owner_name}
-        onChangeText={(text) => setFormData({ ...formData, owner_name: text })}
-        style={styles.formInput}
-        mode="outlined"
-      />
-      <TextInput
-        label={translations.phoneNumber}
-        value={formData.phone_number}
-        onChangeText={(text) => setFormData({ ...formData, phone_number: text })}
-        style={styles.formInput}
-        mode="outlined"
-        keyboardType="phone-pad"
-      />
-      <TextInput
-        label={translations.email}
-        value={formData.email}
-        onChangeText={(text) => setFormData({ ...formData, email: text })}
-        style={styles.formInput}
-        mode="outlined"
-        keyboardType="email-address"
-      />
-      <TextInput
-        label={translations.address}
-        value={formData.address}
-        onChangeText={(text) => setFormData({ ...formData, address: text })}
-        style={styles.formInput}
-        mode="outlined"
-        multiline
-      />
-      <TextInput
-        label={translations.creditLimit}
-        value={formData.credit_limit}
-        onChangeText={(text) => setFormData({ ...formData, credit_limit: text })}
-        style={styles.formInput}
-        mode="outlined"
-        keyboardType="numeric"
-      />
-      <TextInput
-        label={translations.discountPercentage}
-        value={formData.discount_percentage}
-        onChangeText={(text) => setFormData({ ...formData, discount_percentage: text })}
-        style={styles.formInput}
-        mode="outlined"
-        keyboardType="numeric"
-      />
-      <TextInput
-        label={translations.notes}
-        value={formData.notes}
-        onChangeText={(text) => setFormData({ ...formData, notes: text })}
-        style={styles.formInput}
-        mode="outlined"
-        multiline
-      />
-      
-      <View style={styles.formActions}>
-        <Button mode="outlined" onPress={onCancel} style={styles.formButton}>
-          {translations.cancel}
-        </Button>
-        <Button mode="contained" onPress={handleSubmit} style={styles.formButton}>
-          {translations.addCustomer}
-        </Button>
+    const handleSubmit = () => {
+      if (!formData.business_name || !formData.owner_name || !formData.phone_number) {
+        alert('Please fill in all required fields (Business Name, Owner Name, Phone Number)');
+        return;
+      }
+
+      onSubmit({
+        ...formData,
+        credit_limit: parseFloat(formData.credit_limit) || 0,
+        discount_percentage: parseFloat(formData.discount_percentage) || 0
+      });
+    };
+
+    return (
+      <View style={styles.formContainer}>
+        <TextInput
+          label={translations.businessName}
+          value={formData.business_name}
+          onChangeText={(text) => setFormData({ ...formData, business_name: text })}
+          style={styles.formInput}
+          mode="outlined"
+        />
+        <TextInput
+          label={translations.ownerName}
+          value={formData.owner_name}
+          onChangeText={(text) => setFormData({ ...formData, owner_name: text })}
+          style={styles.formInput}
+          mode="outlined"
+        />
+        <TextInput
+          label={translations.phoneNumber}
+          value={formData.phone_number}
+          onChangeText={(text) => setFormData({ ...formData, phone_number: text })}
+          style={styles.formInput}
+          mode="outlined"
+          keyboardType="phone-pad"
+        />
+        <TextInput
+          label={translations.email}
+          value={formData.email}
+          onChangeText={(text) => setFormData({ ...formData, email: text })}
+          style={styles.formInput}
+          mode="outlined"
+          keyboardType="email-address"
+        />
+        <TextInput
+          label={translations.address}
+          value={formData.address}
+          onChangeText={(text) => setFormData({ ...formData, address: text })}
+          style={styles.formInput}
+          mode="outlined"
+          multiline
+        />
+        <TextInput
+          label={translations.creditLimit}
+          value={formData.credit_limit}
+          onChangeText={(text) => setFormData({ ...formData, credit_limit: text })}
+          style={styles.formInput}
+          mode="outlined"
+          keyboardType="numeric"
+        />
+        <TextInput
+          label={translations.discountPercentage}
+          value={formData.discount_percentage}
+          onChangeText={(text) => setFormData({ ...formData, discount_percentage: text })}
+          style={styles.formInput}
+          mode="outlined"
+          keyboardType="numeric"
+        />
+        <TextInput
+          label={translations.notes}
+          value={formData.notes}
+          onChangeText={(text) => setFormData({ ...formData, notes: text })}
+          style={styles.formInput}
+          mode="outlined"
+          multiline
+        />
+
+        <View style={styles.formActions}>
+          <Button mode="outlined" onPress={onCancel} style={styles.formButton}>
+            {translations.cancel}
+          </Button>
+          <Button mode="contained" onPress={handleSubmit} style={styles.formButton}>
+            {translations.addCustomer}
+          </Button>
+        </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -331,7 +337,7 @@ const AddCustomerForm = ({ onSubmit, onCancel }: { onSubmit: (data: any) => void
   const fetchNearbyRetailers = async () => {
     try {
       setLoadingRetailers(true);
-      
+
       // Get seller's location from seller_details
       const { data: sellerData, error: sellerError } = await supabase
         .from('seller_details')
@@ -443,8 +449,8 @@ const AddCustomerForm = ({ onSubmit, onCancel }: { onSubmit: (data: any) => void
           <View style={styles.customerInfo}>
             <View style={styles.nameContainer}>
               <Text variant="titleMedium">{customer?.business_name || 'Business Name'}</Text>
-              <Chip 
-                mode="outlined" 
+              <Chip
+                mode="outlined"
                 style={[styles.typeChip, customer.customer_type === 'retailer' ? styles.retailerChip : styles.manualChip]}
                 textStyle={styles.chipText}
               >
@@ -570,17 +576,17 @@ const AddCustomerForm = ({ onSubmit, onCancel }: { onSubmit: (data: any) => void
         </View>
       ) : customers.length === 0 ? (
         <View style={styles.centerContainer}>
-            <Text variant="headlineSmall" style={styles.emptyTitle}>{translations.noCustomersFound}</Text>
-            <Text variant="bodyMedium" style={styles.emptyText}>
-              {translations.noCustomersText}
-            </Text>
+          <Text variant="headlineSmall" style={styles.emptyTitle}>{translations.noCustomersFound}</Text>
+          <Text variant="bodyMedium" style={styles.emptyText}>
+            {translations.noCustomersText}
+          </Text>
           <Text variant="bodySmall" style={styles.debugText}>
             Debug: Check console logs for more details
           </Text>
         </View>
       ) : (
         <FlatList
-          data={customers.filter(customer => 
+          data={customers.filter(customer =>
             customer.business_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             customer.owner_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
             customer.phone_number.includes(searchQuery)

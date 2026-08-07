@@ -1,188 +1,260 @@
 /**
- * Native Voice Service using react-native-nitro-sound
- * Provides speech-to-text functionality without expo-av dependency
+ * Native Voice Service for React Native
+ * Uses @react-native-voice/voice for real-time speech recognition
+ * Uses expo-speech for text-to-speech
+ * 
+ * This provides a ChatGPT/Claude-like conversational voice experience
  */
 
-import Sound from 'react-native-nitro-sound';
-import * as FileSystem from 'expo-file-system';
-import { Platform, PermissionsAndroid } from 'react-native';
+import * as Speech from 'expo-speech';
+import { Platform, Alert } from 'react-native';
+import { VOICE_CONFIG } from '../../config/awsBedrock';
+import { realtimeVoiceService, VoiceRecognitionResult, RealtimeVoiceServiceStatus } from './realtimeVoiceService';
 
-interface VoiceTranscriptionResult {
-  transcript: string;
+export interface SpeechRecognitionResult {
+  text: string;
   confidence?: number;
-  languageCode?: string;
+  isFinal: boolean;
+  partialResults?: string[];
 }
 
-interface RecordingConfig {
-  sampleRate?: number;
-  numberOfChannels?: number;
-  bitRate?: number;
-  format?: string;
+export interface NativeVoiceServiceStatus {
+  isListening: boolean;
+  isSpeaking: boolean;
+  isAvailable: boolean;
+  error?: string;
 }
+
+type SpeechResultCallback = (result: SpeechRecognitionResult) => void;
+type SpeechErrorCallback = (error: string) => void;
 
 class NativeVoiceService {
-  private sound: Sound | null = null;
-  private isRecording = false;
-  private recordingPath: string = '';
+  private isListening = false;
+  private isSpeaking = false;
+  private onResultCallback: SpeechResultCallback | null = null;
+  private onErrorCallback: SpeechErrorCallback | null = null;
 
   constructor() {
-    this.sound = new Sound();
-    this.requestPermissions();
+    console.log('[NativeVoiceService] Initialized with realtime voice recognition');
   }
 
-  private async requestPermissions() {
+  /**
+   * Start listening for speech (uses device's native speech recognition)
+   */
+  async startListening(
+    language: string = 'en-US',
+    onResult?: SpeechResultCallback,
+    onError?: SpeechErrorCallback
+  ): Promise<boolean> {
     try {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        ]);
-        
-        const allPermissionsGranted = Object.values(granted).every(
-          permission => permission === PermissionsAndroid.RESULTS.GRANTED
-        );
-        
-        if (!allPermissionsGranted) {
-          console.error('Audio permissions not granted');
+      if (this.isListening) {
+        console.warn('[NativeVoiceService] Already listening');
+        return false;
+      }
+
+      // Check if voice recognition is available
+      if (!realtimeVoiceService.checkAvailability()) {
+        const errorMsg = 'Voice recognition requires a native build (APK). Please type your message instead.';
+        console.warn('[NativeVoiceService]', errorMsg);
+        if (onError) onError(errorMsg);
+        return false;
+      }
+
+      // Stop any ongoing TTS
+      if (this.isSpeaking) {
+        await this.stopSpeaking();
+      }
+
+      this.onResultCallback = onResult || null;
+      this.onErrorCallback = onError || null;
+
+      console.log('[NativeVoiceService] Starting speech recognition, language:', language);
+
+      // Use the realtime voice service for native speech recognition
+      const started = await realtimeVoiceService.startListening(
+        language,
+        (result: VoiceRecognitionResult) => {
+          console.log('[NativeVoiceService] Recognition result:', result.text, 'isFinal:', result.isFinal);
+
+          if (this.onResultCallback) {
+            this.onResultCallback({
+              text: result.text,
+              isFinal: result.isFinal,
+              partialResults: result.partialResults,
+              confidence: result.isFinal ? 0.9 : 0.7,
+            });
+          }
+        },
+        (error: string) => {
+          // Check if this is an expected/normal error
+          const isExpectedError =
+            error.includes('No match') ||
+            error.includes('Didn\'t understand') ||
+            error.includes('cancelled') ||
+            error.includes('Cancelled') ||
+            error.includes('timeout');
+
+          if (!isExpectedError) {
+            console.error('[NativeVoiceService] Recognition error:', error);
+          } else {
+            console.log('[NativeVoiceService] Recognition ended:', error);
+          }
+
+          this.isListening = false;
+
+          if (this.onErrorCallback) {
+            this.onErrorCallback(error);
+          }
+        },
+        (status: RealtimeVoiceServiceStatus) => {
+          this.isListening = status.isListening;
+          this.isSpeaking = status.isSpeaking;
         }
+      );
+
+      if (started) {
+        this.isListening = true;
+        console.log('[NativeVoiceService] Speech recognition started');
+        return true;
+      } else {
+        console.error('[NativeVoiceService] Failed to start speech recognition');
+        return false;
       }
-    } catch (error) {
-      console.error('Error requesting permissions:', error);
+    } catch (error: any) {
+      console.error('[NativeVoiceService] Error starting speech recognition:', error);
+      this.isListening = false;
+
+      if (this.onErrorCallback) {
+        this.onErrorCallback(error.message || 'Failed to start speech recognition');
+      }
+
+      return false;
     }
   }
 
   /**
-   * Start recording audio
+   * Stop listening and get the final transcription
    */
-  async startRecording(): Promise<void> {
+  async stopListening(): Promise<string> {
     try {
-      if (this.isRecording) {
-        console.warn('Already recording');
-        return;
+      if (!this.isListening) {
+        return '';
       }
 
-      if (!this.sound) {
-        this.sound = new Sound();
-      }
+      console.log('[NativeVoiceService] Stopping speech recognition');
+      const result = await realtimeVoiceService.stopListening();
+      this.isListening = false;
 
-      // Generate a unique filename for the recording
-      const timestamp = Date.now();
-      this.recordingPath = `${FileSystem.documentDirectory}recording_${timestamp}.m4a`;
-
-      await this.sound.startRecorder(this.recordingPath, {
-        SampleRate: 22050,
-        Channels: 1,
-        AudioQuality: 'High',
-        AudioEncoding: 'aac',
-        AudioEncodingBitRate: 32000,
-      });
-
-      this.isRecording = true;
-      console.log('Recording started:', this.recordingPath);
+      console.log('[NativeVoiceService] Final result:', result);
+      return result;
     } catch (error) {
-      console.error('Error starting recording:', error);
-      this.isRecording = false;
-      throw error;
+      console.error('[NativeVoiceService] Error stopping speech recognition:', error);
+      this.isListening = false;
+      return '';
     }
   }
 
   /**
-   * Stop recording audio
+   * Cancel speech recognition
    */
-  async stopRecording(): Promise<string | null> {
+  async cancel(): Promise<void> {
     try {
-      if (!this.isRecording || !this.sound) {
-        console.warn('Not currently recording');
-        return null;
-      }
-
-      const result = await this.sound.stopRecorder();
-      this.isRecording = false;
-      
-      console.log('Recording stopped:', result);
-      return this.recordingPath;
+      await realtimeVoiceService.cancel();
+      this.isListening = false;
+      this.onResultCallback = null;
+      this.onErrorCallback = null;
+      console.log('[NativeVoiceService] Speech recognition cancelled');
     } catch (error) {
-      console.error('Error stopping recording:', error);
-      this.isRecording = false;
-      return null;
+      console.error('[NativeVoiceService] Error cancelling:', error);
+      this.isListening = false;
     }
   }
 
   /**
-   * Transcribe audio using Azure Speech Service
+   * Speak text using TTS
    */
-  async transcribe(audioUri: string): Promise<VoiceTranscriptionResult> {
+  async speak(text: string, language: string = 'en'): Promise<void> {
     try {
-      // Read the audio file as base64
-      const audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Stop listening while speaking
+      if (this.isListening) {
+        await this.cancel();
+      }
 
-      // For now, return a mock result since we need to implement the actual transcription service
-      // This would typically call Azure Speech Service or another transcription API
-      return {
-        transcript: 'Mock transcription - implement actual service',
-        confidence: 0.95,
-        languageCode: 'en-US'
-      };
+      console.log('[NativeVoiceService] Speaking:', text.substring(0, 50) + '...');
+      this.isSpeaking = true;
+
+      await realtimeVoiceService.speak(text, language);
+
+      this.isSpeaking = false;
     } catch (error) {
-      console.error('Error transcribing audio:', error);
-      throw error;
+      console.error('[NativeVoiceService] Error speaking:', error);
+      this.isSpeaking = false;
     }
   }
 
   /**
-   * Record and transcribe in one operation
+   * Stop TTS
    */
-  async recordAndTranscribe(): Promise<VoiceTranscriptionResult> {
+  async stopSpeaking(): Promise<void> {
     try {
-      await this.startRecording();
-      
-      // Wait for user to stop recording (this would be controlled by UI)
-      // For now, we'll just wait a few seconds
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      const audioUri = await this.stopRecording();
-      
-      if (!audioUri) {
-        throw new Error('No audio recorded');
-      }
-      
-      return await this.transcribe(audioUri);
+      await realtimeVoiceService.stopSpeaking();
+      this.isSpeaking = false;
     } catch (error) {
-      console.error('Error in recordAndTranscribe:', error);
-      throw error;
+      console.error('[NativeVoiceService] Error stopping speech:', error);
+      this.isSpeaking = false;
     }
   }
 
   /**
-   * Check if currently recording
+   * Check if voice recognition is available
    */
-  isCurrentlyRecording(): boolean {
-    return this.isRecording;
+  isAvailable(): boolean {
+    return realtimeVoiceService.checkAvailability();
   }
 
   /**
-   * Cleanup resources
+   * Get current status
    */
-  async cleanup(): Promise<void> {
-    try {
-      if (this.isRecording && this.sound) {
-        await this.sound.stopRecorder();
-        this.isRecording = false;
-      }
-      
-      if (this.sound) {
-        // Clean up the sound instance if needed
-        this.sound = null;
-      }
-    } catch (error) {
-      console.error('Error during cleanup:', error);
-    }
+  getStatus(): NativeVoiceServiceStatus {
+    const status = realtimeVoiceService.getStatus();
+    return {
+      isListening: status.isListening,
+      isSpeaking: status.isSpeaking,
+      isAvailable: status.isAvailable,
+    };
+  }
+
+  /**
+   * Check if currently listening
+   */
+  isCurrentlyListening(): boolean {
+    return this.isListening;
+  }
+
+  /**
+   * Check if currently speaking
+   */
+  isCurrentlySpeaking(): boolean {
+    return this.isSpeaking;
+  }
+
+  /**
+   * Cleanup
+   */
+  async destroy(): Promise<void> {
+    await realtimeVoiceService.destroy();
+    this.isListening = false;
+    this.isSpeaking = false;
+    this.onResultCallback = null;
+    this.onErrorCallback = null;
   }
 }
 
-export type { VoiceTranscriptionResult, RecordingConfig };
+// Singleton instance
+const nativeVoiceServiceInstance = new NativeVoiceService();
+
+// Backward compatible exports
+export const nativeVoiceService = nativeVoiceServiceInstance;
+export const getNativeVoiceService = () => nativeVoiceServiceInstance;
 export { NativeVoiceService };
-export default NativeVoiceService;
+export default nativeVoiceServiceInstance;

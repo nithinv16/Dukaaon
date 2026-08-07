@@ -33,6 +33,7 @@ export const COLORS = {
   lightGrey: '#E0E0E0',
   darkBlueGrey: '#37474F',
   error: '#FF3B30',
+  danger: '#FF3B30',
   success: '#4CAF50',
   info: '#2196F3',
   black: '#000000',

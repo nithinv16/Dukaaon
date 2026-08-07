@@ -1,64 +1,47 @@
+/**
+ * App Entry Point - Simplified Auth Loading
+ * 
+ * This component handles the initial app loading and navigation.
+ * It uses SimpleAuthLoader for a cache-first approach:
+ * 1. Check AsyncStorage for cached auth (fast)
+ * 2. Navigate immediately based on cache
+ * 3. Validate session in background (non-blocking)
+ * 
+ * Requirements: 1.1, 1.2, 1.3, 4.1, 4.2, 5.1, 5.2, 5.3
+ */
+
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, Alert, Image, Animated, Dimensions, SafeAreaView } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, Image, Animated, Dimensions, SafeAreaView } from 'react-native';
 import { Button } from 'react-native-paper';
 import { useAuthStore } from '../store/auth';
-import { supabase } from '../services/supabase/supabase';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import authService from '../services/auth/authService';
+import { SimpleAuthLoader } from '../services/auth/SimpleAuthLoader';
 import { LinearGradient } from 'expo-linear-gradient';
-
+import { supabase, setCachedAccessToken, initializeSupabaseSession } from '../services/supabase/supabase';
 
 // Get screen dimensions
 const { width, height } = Dimensions.get('window');
 
-// Function to check if we need to force reload the app
-const checkForceReload = async () => {
-  try {
-    const forceReload = await AsyncStorage.getItem('_forceReload');
-    if (forceReload) {
-      console.log('Force reload flag detected, clearing...');
-      await AsyncStorage.removeItem('_forceReload');
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('Error checking force reload flag:', error);
-    return false;
-  }
-};
+// Maximum splash duration
+const MAX_SPLASH_DURATION_MS = 10000;
 
-
+// Supabase configuration
+const SUPABASE_URL = 'https://xcpznnkpjgyrpbvpnvit.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjcHpubmtwamd5cnBidnBudml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg2MTc3MjgsImV4cCI6MjA1NDE5MzcyOH0.1Gg97eXqRmNcZpmKYaBNDozfc_mXrgFv_uHj-br-u_k';
+const SUPABASE_AUTH_KEY = 'sb-xcpznnkpjgyrpbvpnvit-auth-token';
 
 export default function Index() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [redirectPath, setRedirectPath] = useState<string | null>(null);
-  const [debugInfo, setDebugInfo] = useState<any>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const redirectAttempts = useRef(0);
-  const [showManualNav, setShowManualNav] = useState(false);
-  
+  const [navigating, setNavigating] = useState(false);
+  const safetyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
-  
-  // Check for force reload when component mounts
-  useEffect(() => {
-    const checkReload = async () => {
-      const shouldReload = await checkForceReload();
-      if (shouldReload) {
-        console.log('App was force reloaded, redirecting to language screen...');
-        setLoading(false);
-        router.replace('/(auth)/language');
-      }
-    };
-    
-    checkReload();
-  }, []);
-  
+
   // Start animations when component mounts
   useEffect(() => {
     Animated.parallel([
@@ -88,214 +71,204 @@ export default function Index() {
       ),
     ]).start();
   }, []);
-  
-  // Show manual navigation after 5 seconds if still on loading screen
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (redirectPath === '/(main)/home' && redirectAttempts.current >= 2) {
-        console.log('Showing manual navigation option');
-        setShowManualNav(true);
-      }
-    }, 5000);
-    
-    return () => clearTimeout(timer);
-  }, [redirectPath, redirectAttempts.current]);
-  
-  // Helper function for manual navigation
-  const handleManualNavigation = () => {
-    console.log('Manual navigation triggered');
-    // Reset any redirects in progress
-    setRedirectPath(null);
-    // Navigate directly
-    router.push('/(main)/home/');
-  };
-  
-  // Helper function to force navigation to home screen
-  const forceNavigateToHome = useCallback(() => {
-    console.log('Force navigating to home screen');
-    // Clear any existing timeouts
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    
-    // Force direct navigation with reset
-    try {
-      // Try the backup route first
-      router.push('/home');
-      console.log('Navigation attempted via backup route');
-      
-      // Set a fallback to try direct navigation again after a delay
-      setTimeout(() => {
-        console.log('Fallback navigation attempt');
-        router.push('/(main)/home/');
-      }, 1000);
-    } catch (e) {
-      console.error('Navigation error:', e);
-    }
-  }, [router]);
 
-  // Set a timeout to prevent the app from getting stuck in a loading state
+  /**
+   * Main auth check and navigation effect
+   */
   useEffect(() => {
-    console.log('Setting up safety timeout for splash screen');
-    // Increased safety timeout to 8 seconds to match the auth store timeout
-    // This prevents race conditions between different timeout mechanisms
-    const safetyTimeout = setTimeout(() => {
-      console.log('Splash screen safety timeout reached after 8 seconds');
-      if (loading) {
-        console.log('Still loading, redirecting to language screen');
+    let isMounted = true;
+
+    const checkAuthAndNavigate = async () => {
+      console.log('Index: Starting simplified auth check');
+      const startTime = Date.now();
+
+      try {
+        // Step 0: Initialize Supabase session first (ensures token is loaded/refreshed)
+        console.log('Index: Initializing Supabase session...');
+        await initializeSupabaseSession();
+        console.log('Index: Supabase session initialized');
+
+        // Step 1: Check cached auth
+        const result = await SimpleAuthLoader.checkCachedAuth();
+        const checkTime = Date.now() - startTime;
+        console.log('Index: Cache check completed', {
+          checkTime,
+          isAuthenticated: result.isAuthenticated,
+          navigateTo: result.navigateTo
+        });
+
+        if (!isMounted) return;
+
+        // Step 2: Set auth store state if authenticated
+        if (result.isAuthenticated && result.profile) {
+          console.log('Index: Setting user in auth store');
+          useAuthStore.getState().setUser(result.profile);
+
+          // Cancel safety timeout
+          if (safetyTimeoutRef.current) {
+            clearTimeout(safetyTimeoutRef.current);
+            safetyTimeoutRef.current = null;
+            console.log('Index: Cancelled safety timeout for authenticated user');
+          }
+
+          // SIMPLE FIX: Always refresh token on app reload to ensure it's valid server-side
+          // Don't trust local expires_at - the server may have invalidated the token
+          console.log('Index: Refreshing session token...');
+
+          try {
+            const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+            console.log('Index: Looking for session in AsyncStorage with key:', SUPABASE_AUTH_KEY);
+            const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
+            console.log('Index: Session string found:', sessionStr ? 'YES (length: ' + sessionStr.length + ')' : 'NO');
+
+            if (sessionStr) {
+              const sessionData = JSON.parse(sessionStr);
+              console.log('Index: Session data parsed, has refresh_token:', !!sessionData?.refresh_token);
+
+              if (sessionData?.refresh_token) {
+                console.log('Index: Found refresh_token, getting fresh access token...');
+
+                // Always refresh to get a valid token
+                const refreshResponse = await fetch(
+                  `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'apikey': SUPABASE_ANON_KEY,
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ refresh_token: sessionData.refresh_token })
+                  }
+                );
+
+                if (refreshResponse.ok) {
+                  const newSessionData = await refreshResponse.json();
+                  console.log('Index: Token refreshed successfully, user:', newSessionData.user?.id);
+
+                  // Store the new session in AsyncStorage
+                  await AsyncStorage.setItem(SUPABASE_AUTH_KEY, JSON.stringify(newSessionData));
+
+                  // CRITICAL: Update the in-memory token cache for immediate use by customFetch
+                  setCachedAccessToken(newSessionData.access_token);
+                  console.log('Index: Updated in-memory token cache');
+
+                  // Update our auth store
+                  useAuthStore.setState({ session: newSessionData as any });
+
+                  // NOTE: We do NOT call setSession - it hangs on React Native!
+                  // The customFetch function will use the cached token instead.
+                  console.log('Index: Skipping setSession (hangs on RN), using cached token for customFetch');
+
+                  // Fetch fresh profile with seller_details using direct fetch
+                  try {
+                    console.log('Index: Fetching fresh profile with seller_details...');
+                    const profileResponse = await fetch(
+                      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${newSessionData.user.id}&select=*,seller_details:seller_details(*)`,
+                      {
+                        method: 'GET',
+                        headers: {
+                          'apikey': SUPABASE_ANON_KEY,
+                          'Authorization': `Bearer ${newSessionData.access_token}`,
+                          'Content-Type': 'application/json'
+                        }
+                      }
+                    );
+
+                    if (profileResponse.ok) {
+                      const profileArr = await profileResponse.json();
+                      if (profileArr && profileArr[0]) {
+                        console.log('Index: Fresh profile fetched successfully');
+                        useAuthStore.getState().setUser(profileArr[0]);
+                        await SimpleAuthLoader.cacheAuthData(profileArr[0], newSessionData);
+                      }
+                    } else {
+                      console.warn('Index: Profile fetch failed, using cached data');
+                    }
+                  } catch (profileErr) {
+                    console.warn('Index: Failed to fetch fresh profile:', profileErr);
+                    // Continue with cached profile - it's better than nothing
+                  }
+                } else {
+                  const errorText = await refreshResponse.text();
+                  console.error('Index: Token refresh failed:', refreshResponse.status, errorText);
+                  // Refresh token is invalid - user needs to start fresh from language selection
+                  await SimpleAuthLoader.clearCachedAuth();
+                  useAuthStore.getState().clearAuth();
+                  router.replace('/(auth)/language');
+                  return;
+                }
+              } else {
+                console.log('Index: No refresh_token, redirecting to language');
+                router.replace('/(auth)/language');
+                return;
+              }
+            } else {
+              console.log('Index: No session found, redirecting to language');
+              router.replace('/(auth)/language');
+              return;
+            }
+          } catch (err) {
+            console.error('Index: Error refreshing session:', err);
+          }
+        }
+
+        if (!isMounted) return;
+
+        // Step 3: Navigate to appropriate screen
+        setNavigating(true);
+        setLoading(false);
+        console.log('Index: Navigating to', result.navigateTo);
+        router.replace(result.navigateTo);
+
+        // Step 4: Set logout callback
+        if (result.isAuthenticated) {
+          SimpleAuthLoader.setLogoutCallback(() => {
+            console.log('Index: Background validation triggered logout');
+            useAuthStore.getState().clearAuth();
+            router.replace('/(auth)/language');
+          });
+        }
+
+      } catch (err) {
+        console.error('Index: Error during auth check', err);
+        if (!isMounted) return;
+
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        setNavigating(true);
         setLoading(false);
         router.replace('/(auth)/language');
       }
-    }, 8000); // Increased to 8 seconds to match auth store timeout
-    
+    };
+
+    checkAuthAndNavigate();
+
     return () => {
-      clearTimeout(safetyTimeout);
+      isMounted = false;
+    };
+  }, []);
+
+  /**
+   * Safety timeout - ensures splash screen never shows indefinitely
+   */
+  useEffect(() => {
+    safetyTimeoutRef.current = setTimeout(() => {
+      if (loading) {
+        console.log('Index: Safety timeout reached, navigating to language screen');
+        setNavigating(true);
+        setLoading(false);
+        router.replace('/(auth)/language');
+      }
+    }, MAX_SPLASH_DURATION_MS);
+
+    return () => {
+      if (safetyTimeoutRef.current) {
+        clearTimeout(safetyTimeoutRef.current);
+      }
     };
   }, [loading]);
 
-  // Wait for auth store to complete initialization instead of doing independent auth check
-  useEffect(() => {
-    const checkAuthStore = async () => {
-      console.log('Index: Waiting for auth store initialization');
-      
-      try {
-        // First check if we have cached auth data
-        const cachedAuthData = await Promise.all([
-          AsyncStorage.getItem('auth_verified'),
-          AsyncStorage.getItem('user_id'),
-          AsyncStorage.getItem('profile_id')
-        ]);
-        
-        const [authVerified, userId, profileId] = cachedAuthData;
-        const hasCachedAuth = authVerified === 'true' && (userId || profileId);
-        
-        if (hasCachedAuth) {
-          console.log('Index: Found cached auth data for user:', userId);
-        } else {
-          console.log('Index: No cached auth data found');
-        }
-        
-        // Wait for auth store to finish loading with longer timeout for cached auth
-        const maxWaitTime = hasCachedAuth ? 5000 : 3000; // Give more time if we have cached auth
-        const startTime = Date.now();
-        
-        console.log(`Index: Waiting up to ${maxWaitTime}ms for auth store initialization`);
-        
-        const waitForAuthStore = new Promise<void>((resolve) => {
-          const checkInterval = setInterval(() => {
-            const authState = useAuthStore.getState();
-            const elapsedTime = Date.now() - startTime;
-            
-            // If auth store has finished loading
-            if (!authState.loading) {
-              console.log(`Index: Auth store finished loading after ${elapsedTime}ms`);
-              clearInterval(checkInterval);
-              resolve();
-            }
-            // Or if we've waited too long
-            else if (elapsedTime >= maxWaitTime) {
-              console.log(`Index: Auth store still loading after ${elapsedTime}ms, proceeding anyway`);
-              clearInterval(checkInterval);
-              resolve();
-            }
-          }, 100);
-        });
-        
-        await waitForAuthStore;
-        
-        // Get final auth state after initialization
-        const authState = useAuthStore.getState();
-        console.log('Index: Auth store state after wait:', {
-          hasSession: !!authState.session,
-          hasUser: !!authState.user,
-          loading: authState.loading
-        });
-        
-        // If we have a valid session or cached user, navigate to main app
-        if (authState.session || authState.user) {
-          console.log('Index: Valid authentication found, navigating to main app');
-          setLoading(false);
-          router.replace('/(main)');
-        } else if (hasCachedAuth && authState.loading) {
-          // Auth store is still loading but we have cached auth - give it more time
-          console.log('Index: Auth store still loading with cached auth, waiting 3 more seconds');
-          
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          
-          const updatedAuthState = useAuthStore.getState();
-          console.log('Index: Auth store state after extended wait:', {
-            hasSession: !!updatedAuthState.session,
-            hasUser: !!updatedAuthState.user,
-            loading: updatedAuthState.loading
-          });
-          
-          if (updatedAuthState.session || updatedAuthState.user) {
-            console.log('Index: Auth restored after extended wait, navigating to main app');
-            setLoading(false);
-            router.replace('/(main)');
-          } else {
-            console.log('Index: Auth not restored after extended wait, navigating to language screen');
-            setLoading(false);
-            router.replace('/(auth)/language');
-          }
-        } else {
-          // No cached auth or auth store finished without user
-          console.log('Index: No valid authentication found, navigating to language screen');
-          setLoading(false);
-          router.replace('/(auth)/language');
-        }
-      } catch (error) {
-        console.error('Index: Error in auth check:', error);
-        setLoading(false);
-        router.replace('/(auth)/language');
-      }
-    };
-    
-    checkAuthStore();
-  }, []);
-
-  // Handle navigation effect - always defined, not conditionally
-  useEffect(() => {
-    if (redirectPath) {
-      console.log('Navigating to:', redirectPath);
-      // Increment redirect attempts for tracking
-      redirectAttempts.current += 1;
-      
-      // Small timeout to ensure component is fully rendered before navigation
-      const navigationTimer = setTimeout(() => {
-        try {
-          console.log('Trying navigation to', redirectPath);
-          router.push(redirectPath);
-          
-          // Additional fallback - try again after 500ms
-          setTimeout(() => {
-            if (window.location.pathname === '/') {
-              console.log('Still on index page, trying replacement');
-              router.replace(redirectPath);
-            }
-          }, 500);
-        } catch (error) {
-          console.error('Navigation error:', error);
-          // Fallback to replacement if push fails
-          try {
-            console.log('Trying replacement navigation');
-            router.replace(redirectPath);
-          } catch (replaceError) {
-            console.error('Replacement navigation error:', replaceError);
-            
-            // Last resort - create direct navigation link for user
-            console.log('Adding manual navigation option');
-            setShowManualNav(true);
-          }
-        }
-      }, 300); // Increased delay for navigation
-      
-      return () => clearTimeout(navigationTimer);
-    }
-  }, [redirectPath]);
-  
-  // If loading, show the new splash screen
-  if (loading) {
+  // Show splash screen during loading OR navigating
+  if (loading || navigating) {
     return (
       <View style={styles.container}>
         <LinearGradient
@@ -305,33 +278,25 @@ export default function Index() {
           end={{ x: 1, y: 1 }}
         >
           <SafeAreaView style={styles.safeArea}>
-            <Animated.View 
+            <Animated.View
               style={[
                 styles.contentContainer,
                 {
                   opacity: fadeAnim,
                   transform: [{ scale: scaleAnim }],
-                }
+                },
               ]}
             >
-              <Image 
-                source={require('../assets/images/logo.png')} 
+              <Image
+                source={require('../assets/images/logo.png')}
                 style={styles.logo}
                 resizeMode="contain"
               />
-              
-              <View style={styles.illustrationContainer}>
-                <Image 
-                  source={require('../assets/images/connecting-retailers.png')} 
-                  style={styles.illustration}
-                  resizeMode="contain"
-                />
-              </View>
-              
-              <Text style={styles.tagline}>Connecting Retailers & Wholesalers</Text>
-              
+
+              <Text style={styles.tagline}>Your One-Stop B2B Marketplace</Text>
+
               <View style={styles.loadingContainer}>
-                <Animated.View 
+                <Animated.View
                   style={[
                     styles.progressBar,
                     {
@@ -343,17 +308,17 @@ export default function Index() {
                   ]}
                 />
               </View>
-              
-              <Text style={styles.loadingText}>Loading your experience...</Text>
+
+              <Text style={styles.loadingText}>Loading...</Text>
             </Animated.View>
           </SafeAreaView>
         </LinearGradient>
       </View>
     );
   }
-  
-  // If error and not redirecting, show error with retry option
-  if (errorMessage && !redirectPath) {
+
+  // Error state view
+  if (error) {
     return (
       <View style={styles.container}>
         <LinearGradient
@@ -363,83 +328,36 @@ export default function Index() {
           end={{ x: 1, y: 1 }}
         >
           <SafeAreaView style={styles.safeArea}>
-            <Image 
-              source={require('../assets/images/logo.png')} 
+            <Image
+              source={require('../assets/images/logo.png')}
               style={styles.logo}
               resizeMode="contain"
             />
-            
-            <Text style={styles.errorText}>Error: {errorMessage}</Text>
-            
-            <Button 
+
+            <Text style={styles.errorText}>Error: {error}</Text>
+
+            <Button
               mode="contained"
               onPress={() => {
                 setLoading(true);
-                setErrorMessage(null);
+                setError(null);
                 router.replace('/');
-              }} 
+              }}
               style={styles.button}
               buttonColor="#FFFFFF"
               textColor="#FF7D00"
             >
               Retry
             </Button>
-            
-            <Button 
+
+            <Button
               mode="contained"
-              onPress={() => router.push('/(auth)/language')}
+              onPress={() => router.replace('/(auth)/language')}
               style={[styles.button, { marginTop: 12 }]}
               buttonColor="#FFFFFF"
               textColor="#FF7D00"
             >
               Go to Language Selection
-            </Button>
-          </SafeAreaView>
-        </LinearGradient>
-      </View>
-    );
-  }
-  
-  // If we have a redirect path, show redirecting screen
-  if (redirectPath) {
-    console.log('Preparing navigation to:', redirectPath);
-    
-    return (
-      <View style={styles.container}>
-        <LinearGradient
-          colors={['#FF7D00', '#FFA64D', '#FFCC99']}
-          style={styles.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-        >
-          <SafeAreaView style={styles.safeArea}>
-            <Image 
-              source={require('../assets/images/logo.png')} 
-              style={styles.logo}
-              resizeMode="contain"
-            />
-            
-            <Text style={styles.loadingText}>Taking you to the app...</Text>
-            
-            <ActivityIndicator size="large" color="#FFFFFF" style={styles.spinner} />
-            
-            <Button 
-              mode="contained"
-              onPress={() => {
-                // Manual navigation as backup
-                console.log('Manual navigation to:', redirectPath);
-                try {
-                  router.push(redirectPath);
-                } catch (error) {
-                  console.error('Manual navigation error:', error);
-                  router.replace(redirectPath);
-                }
-              }}
-              style={styles.button}
-              buttonColor="#FFFFFF"
-              textColor="#FF7D00"
-            >
-              Continue
             </Button>
           </SafeAreaView>
         </LinearGradient>
@@ -457,27 +375,27 @@ export default function Index() {
         end={{ x: 1, y: 1 }}
       >
         <SafeAreaView style={styles.safeArea}>
-          <Image 
-            source={require('../assets/images/logo.png')} 
+          <Image
+            source={require('../assets/images/logo.png')}
             style={styles.logo}
             resizeMode="contain"
           />
-          
+
           <Text style={styles.loadingText}>Welcome to DukaaOn</Text>
-          
-          <Button 
+
+          <Button
             mode="contained"
-            onPress={handleManualNavigation}
+            onPress={() => router.replace('/(main)/home/')}
             style={styles.button}
             buttonColor="#FFFFFF"
             textColor="#FF7D00"
           >
             Go to Home
           </Button>
-          
-          <Button 
+
+          <Button
             mode="contained"
-            onPress={() => router.push('/(auth)/language')}
+            onPress={() => router.replace('/(auth)/language')}
             style={[styles.button, { marginTop: 12 }]}
             buttonColor="#FFFFFF"
             textColor="#FF7D00"
@@ -560,9 +478,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.1)',
     borderRadius: 8,
     width: '90%',
-  },
-  spinner: {
-    marginVertical: 20,
   },
   button: {
     marginTop: 24,

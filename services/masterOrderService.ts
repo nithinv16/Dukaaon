@@ -20,6 +20,7 @@ import {
 } from '../types/master-orders';
 import { OrderWithMaster } from '../types/master-orders';
 import { NotificationService } from './notifications/NotificationService';
+import { authkeyWhatsAppService } from './whatsapp/AuthkeyWhatsAppService';
 
 export class MasterOrderService {
   /**
@@ -78,19 +79,27 @@ export class MasterOrderService {
   static async createIndividualOrders(
     masterOrderId: string,
     orders: Omit<OrderWithMaster, 'id' | 'master_order_id' | 'created_at' | 'updated_at'>[]
-  ): Promise<{ success: boolean; error?: string; orderIds?: string[] }> {
+  ): Promise<{ success: boolean; error?: string; orderIds?: string[]; orders?: { id: string; order_number: string; seller_id: string }[] }> {
     try {
       const ordersWithMasterId = orders.map(order => ({
         ...order,
         master_order_id: masterOrderId,
+        delivery_fee: order.delivery_fee ?? 0, // Explicitly ensure delivery_fee is included
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }));
 
+      // Debug log to verify delivery_fee is included
+      console.log('Creating individual orders with delivery_fee:', ordersWithMasterId.map(o => ({
+        seller_id: o.seller_id,
+        delivery_fee: o.delivery_fee,
+        total_amount: o.total_amount
+      })));
+
       const { data, error } = await supabase
         .from('orders')
         .insert(ordersWithMasterId)
-        .select('id');
+        .select('id, order_number, seller_id');
 
       if (error) {
         console.error('Error creating individual orders:', error);
@@ -99,7 +108,8 @@ export class MasterOrderService {
 
       return {
         success: true,
-        orderIds: data.map(order => order.id)
+        orderIds: data.map(order => order.id),
+        orders: data
       };
     } catch (error) {
       console.error('Error in createIndividualOrders:', error);
@@ -393,8 +403,8 @@ export class MasterOrderService {
             order_number: masterOrderData.order_number,
             status: masterOrderData.status,
             created_at: masterOrderData.created_at,
-            delivery_address: typeof masterOrderData.delivery_address === 'string' 
-              ? masterOrderData.delivery_address 
+            delivery_address: typeof masterOrderData.delivery_address === 'string'
+              ? masterOrderData.delivery_address
               : masterOrderData.delivery_address?.full_address || 'No address provided',
             delivery_fee: masterOrderData.delivery_fee || 0,
             total: masterOrderData.total_amount || 0,
@@ -525,53 +535,164 @@ export class MasterOrderService {
       }
 
       // 3. Fetch retailer and seller details for notifications
-      const { data: retailerData } = await supabase
+      console.log('[MasterOrder] Step 3: Fetching data for notifications');
+      console.log('[MasterOrder] User ID:', userId);
+      console.log('[MasterOrder] Seller IDs:', Object.keys(ordersBySeller));
+
+      // Fetch retailer data from profiles (business_details is JSONB with shopName, ownerName, address, etc.)
+      const { data: retailerData, error: retailerError } = await supabase
         .from('profiles')
-        .select('name, phone')
+        .select('id, phone_number, business_details, latitude, longitude')
         .eq('id', userId)
         .single();
 
-      const sellerIds = Object.keys(ordersBySeller);
-      const { data: sellersData } = await supabase
-        .from('profiles')
-        .select('id, name, phone, address')
-        .in('id', sellerIds);
+      if (retailerError) {
+        console.warn('[MasterOrder] Error fetching retailer:', retailerError.message);
+      }
 
-      // 4. Send notifications to sellers
-      if (retailerData && sellersData) {
-        for (const [sellerId, orderData] of Object.entries(ordersBySeller)) {
-          const seller = sellersData.find(s => s.id === sellerId);
+      // Extract retailer name from business_details
+      const retailerName = retailerData?.business_details?.shopName ||
+        retailerData?.business_details?.ownerName ||
+        'Customer';
+      const retailerPhone = retailerData?.phone_number || '';
+      console.log('[MasterOrder] Retailer data:', retailerData ? `${retailerName} (${retailerPhone})` : 'not found');
+
+      // Fetch seller details from seller_details joined with profiles for phone numbers
+      // profiles.phone_number for phone, seller_details for business_name, owner_name, etc.
+      const sellerIds = Object.keys(ordersBySeller);
+      const { data: sellersData, error: sellersError } = await supabase
+        .from('seller_details')
+        .select(`
+          user_id,
+          business_name,
+          owner_name,
+          seller_type,
+          address,
+          profiles!seller_details_user_id_fkey (
+            id,
+            phone_number
+          )
+        `)
+        .in('user_id', sellerIds);
+
+      if (sellersError) {
+        console.warn('[MasterOrder] Error fetching sellers:', sellersError.message);
+      }
+      console.log('[MasterOrder] Sellers data:', sellersData ? `${sellersData.length} sellers found` : 'not found');
+
+      // Transform seller data to expected format
+      const transformedSellers = (sellersData || []).map(seller => {
+        const profile = seller.profiles as any;
+        const phoneNumber = profile?.phone_number || '';
+        return {
+          id: seller.user_id,
+          name: seller.business_name || seller.owner_name || 'Seller',
+          phone: phoneNumber,
+          address: seller.address || ''
+        };
+      });
+      console.log('[MasterOrder] Transformed sellers:', transformedSellers.map(s => `${s.name} (${s.phone})`));
+
+      // 4. Send notifications to sellers via WhatsApp (Authkey.io)
+      // This works for both wholesalers AND manufacturers
+      console.log('[MasterOrder] Step 4: Sending WhatsApp notifications to sellers');
+      console.log('[MasterOrder] Retailer data:', retailerData ? 'found' : 'missing');
+      console.log('[MasterOrder] Sellers data:', transformedSellers.length > 0 ? `${transformedSellers.length} sellers found` : 'missing');
+
+      // Create seller map for O(1) lookups (used in notifications and pickup locations)
+      const sellerMap = new Map(transformedSellers.map(s => [s.id, s]));
+
+      if (retailerData && transformedSellers.length > 0) {
+        // Initialize Authkey service if not already
+        console.log('[MasterOrder] Authkey available:', authkeyWhatsAppService.isAvailable());
+        if (!authkeyWhatsAppService.isAvailable()) {
+          console.log('[MasterOrder] Initializing Authkey service...');
+          await authkeyWhatsAppService.initialize();
+          console.log('[MasterOrder] Authkey initialized, available:', authkeyWhatsAppService.isAvailable());
+        }
+
+        // Create maps for O(1) lookups
+        const sellerOrderMap = new Map<string, string>();
+        if (ordersResponse.orders) {
+          ordersResponse.orders.forEach(o => {
+            if (o.seller_id && o.order_number) {
+              sellerOrderMap.set(o.seller_id, o.order_number);
+            }
+          });
+        }
+
+        // Send notifications to all sellers in parallel
+        await Promise.all(Object.entries(ordersBySeller).map(async ([sellerId, orderData]) => {
+          const seller = sellerMap.get(sellerId);
+          console.log(`[MasterOrder] Processing seller ${sellerId}:`, seller ? `${seller.name} (${seller.phone})` : 'not found');
+
           if (seller && seller.phone) {
             try {
-              await NotificationService.sendSellerOrderNotification(
+              console.log(`[MasterOrder] Sending WhatsApp to ${seller.name} at ${seller.phone}...`);
+
+              // Try Authkey WhatsApp first (primary method)
+              // Get the specific order number for this seller, fallback to master order number
+              const sellerOrderNumber = sellerOrderMap.get(sellerId) || orderNumber;
+
+              const authkeyResult = await authkeyWhatsAppService.sendSellerOrderNotification(
                 seller.phone,
                 {
-                  orderId: ordersResponse.orderIds?.find((_, index) => 
-                    individualOrders[index].seller_id === sellerId
-                  ) || masterOrderId,
-                  orderNumber: orderNumber,
-                  retailerName: retailerData.name || 'Customer',
-                  items: orderData.items || [],
+                  orderNumber: sellerOrderNumber,
+                  customerName: retailerName,
+                  customerPhone: retailerPhone,
+                  items: (orderData.items || []).map((item: any) => ({
+                    name: item.name || 'Item',
+                    quantity: item.quantity || 1,
+                    price: item.price,
+                    unit: item.unit
+                  })),
                   totalAmount: orderData.total_amount || 0,
-                  deliveryAddress: `${deliveryAddress.street || ''}, ${deliveryAddress.city || ''}, ${deliveryAddress.state || ''}`.trim(),
+                  deliveryAddress: `${deliveryAddress.address || ''}, ${deliveryAddress.city || ''}, ${deliveryAddress.state || ''}`.trim(),
                   paymentMethod: paymentMethod
                 }
               );
-              console.log(`Seller notification sent to ${seller.name} (${seller.phone})`);
+
+              console.log(`[MasterOrder] Authkey result for ${seller.name}:`, authkeyResult);
+
+              if (authkeyResult.success) {
+                console.log(`[Authkey] ✅ WhatsApp notification sent to seller ${seller.name} (${seller.phone})`);
+              } else {
+                console.warn(`[Authkey] ❌ WhatsApp failed for ${seller.name}: ${authkeyResult.error}`);
+                // Fallback to existing notification service
+                await NotificationService.sendSellerOrderNotification(
+                  seller.phone,
+                  {
+                    orderId: ordersResponse.orderIds?.find((_, index) =>
+                      individualOrders[index].seller_id === sellerId
+                    ) || masterOrderId,
+                    orderNumber: sellerOrderNumber,
+                    retailerName: retailerName,
+                    items: orderData.items || [],
+                    totalAmount: orderData.total_amount || 0,
+                    deliveryAddress: `${deliveryAddress.address || ''}, ${deliveryAddress.city || ''}, ${deliveryAddress.state || ''}`.trim(),
+                    paymentMethod: paymentMethod
+                  }
+                );
+                console.log(`[Fallback] Notification sent to ${seller.name} via NotificationService`);
+              }
             } catch (notificationError) {
-              console.warn(`Failed to send notification to seller ${seller.name}:`, notificationError);
+              console.warn(`[MasterOrder] ❌ Failed to send notification to seller ${seller.name}:`, notificationError);
             }
+          } else {
+            console.warn(`[MasterOrder] ⚠️ Seller ${sellerId} has no phone number, skipping notification`);
           }
-        }
+        }));
+      } else {
+        console.warn('[MasterOrder] ⚠️ Missing retailer or seller data, skipping notifications');
       }
 
-      // 5. Create pickup locations
+      // 5. Create pickup locations (reuse sellerMap for O(1) lookups)
       const pickupLocations: PickupLocation[] = Object.keys(ordersBySeller).map(sellerId => {
-        const seller = sellersData?.find(s => s.id === sellerId);
+        const seller = sellerMap.get(sellerId);
         return {
           seller_id: sellerId,
           seller_name: seller?.name || 'Seller',
-          address: seller?.address || deliveryAddress,
+          address: deliveryAddress, // Use delivery address as pickup location
           contact_phone: seller?.phone,
           items_count: ordersBySeller[sellerId].items?.length || 0,
           order_value: ordersBySeller[sellerId].total_amount || 0

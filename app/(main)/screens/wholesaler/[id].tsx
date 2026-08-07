@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ScrollView, Image, ActivityIndicator, Linking, Platform } from 'react-native';
 import { Text, Card, Button, Chip, Divider } from 'react-native-paper';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '../../../../services/supabase/supabase';
 import * as Location from 'expo-location';
+import MapView, { Marker } from 'react-native-maps';
 
 // Define types
 interface WholesalerProfile {
@@ -23,6 +24,7 @@ interface WholesalerProfile {
 
 export default function WholesalerDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const [wholesaler, setWholesaler] = useState<WholesalerProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [distance, setDistance] = useState<number | null>(null);
@@ -38,7 +40,7 @@ export default function WholesalerDetails() {
     setLoading(true);
     try {
       console.log('Fetching wholesaler details for ID:', id);
-      
+
       // Try to get from seller_details first
       const { data: sellerData, error: sellerError } = await supabase
         .from('seller_details')
@@ -46,14 +48,14 @@ export default function WholesalerDetails() {
         .eq('user_id', id)
         .eq('seller_type', 'wholesaler')
         .single();
-      
+
       if (sellerData) {
         console.log('Found wholesaler in seller_details:', sellerData);
         setWholesaler(sellerData);
         setLoading(false);
         return;
       }
-      
+
       // If not found in seller_details, check profiles table
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
@@ -61,15 +63,15 @@ export default function WholesalerDetails() {
         .eq('id', id)
         .eq('role', 'wholesaler')
         .single();
-        
+
       if (profileError) {
         console.error('Error fetching wholesaler profile:', profileError);
         throw profileError;
       }
-      
+
       if (profileData) {
         console.log('Found wholesaler in profiles:', profileData);
-        
+
         // Transform profile data to the same format
         const transformed: WholesalerProfile = {
           id: profileData.id,
@@ -82,7 +84,7 @@ export default function WholesalerDetails() {
           latitude: profileData.latitude,
           longitude: profileData.longitude
         };
-        
+
         setWholesaler(transformed);
       } else {
         console.log('No wholesaler found with ID:', id);
@@ -124,35 +126,35 @@ export default function WholesalerDetails() {
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
     const R = 6371; // Radius of the earth in km
     const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1); 
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2)
-      ; 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+      ;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const d = R * c; // Distance in km
     return Math.round(d * 10) / 10;
   };
-  
+
   const deg2rad = (deg: number): number => {
-    return deg * (Math.PI/180);
+    return deg * (Math.PI / 180);
   };
 
   // Format address for display
   const formatAddress = (address: any): string => {
     if (!address) return 'Address not available';
-    
+
     if (typeof address === 'string') {
       return address;
     }
-    
+
     const parts = [];
     if (address.street) parts.push(address.street);
     if (address.city) parts.push(address.city);
     if (address.state) parts.push(address.state);
     if (address.pincode) parts.push(address.pincode);
-    
+
     return parts.length > 0 ? parts.join(', ') : 'Address not available';
   };
 
@@ -175,16 +177,16 @@ export default function WholesalerDetails() {
 
   return (
     <ScrollView style={styles.container}>
-      <Stack.Screen 
+      <Stack.Screen
         options={{
           title: wholesaler.business_name || 'Wholesaler Profile',
         }}
       />
-      
+
       <View style={styles.header}>
-        <Image 
+        <Image
           source={
-            wholesaler.image_url 
+            wholesaler.image_url
               ? { uri: wholesaler.image_url }
               : require('../../../../assets/icons/seller_shop.jpg')
           }
@@ -192,35 +194,35 @@ export default function WholesalerDetails() {
           resizeMode="cover"
         />
       </View>
-      
+
       <Card style={styles.profileCard}>
         <Card.Content>
           <Text variant="headlineSmall" style={styles.businessName}>
             {wholesaler.business_name}
           </Text>
-          
+
           {distance !== null && (
             <Chip style={styles.distanceChip} icon="map-marker-distance">
               {typeof distance === 'number' ? distance.toFixed(1) : parseFloat(distance) || 0} km away
             </Chip>
           )}
-          
+
           <Divider style={styles.divider} />
-          
+
           <View style={styles.infoRow}>
             <Text variant="bodyLarge" style={styles.infoLabel}>Owner:</Text>
             <Text variant="bodyLarge" style={styles.infoValue}>
               {wholesaler.owner_name || 'Not available'}
             </Text>
           </View>
-          
+
           <View style={styles.infoRow}>
             <Text variant="bodyLarge" style={styles.infoLabel}>Address:</Text>
             <Text variant="bodyLarge" style={styles.infoValue}>
               {formatAddress(wholesaler.address)}
             </Text>
           </View>
-          
+
           {wholesaler.contact_phone && (
             <View style={styles.infoRow}>
               <Text variant="bodyLarge" style={styles.infoLabel}>Contact:</Text>
@@ -229,66 +231,107 @@ export default function WholesalerDetails() {
               </Text>
             </View>
           )}
-          
+
           <Divider style={styles.divider} />
-          
+
           <View style={styles.actionButtons}>
-            <Button 
-              mode="contained" 
-              icon="phone" 
+            <Button
+              mode="contained"
+              icon="phone"
               style={styles.actionButton}
-              onPress={() => {/* Handle call action */}}
+              onPress={() => {/* Handle call action */ }}
             >
               Call
             </Button>
-            <Button 
-              mode="contained" 
-              icon="message-text" 
+            <Button
+              mode="contained"
+              icon="message-text"
               style={styles.actionButton}
-              onPress={() => {/* Handle message action */}}
+              onPress={() => {/* Handle message action */ }}
             >
               Message
             </Button>
           </View>
         </Card.Content>
       </Card>
-      
+
       <Card style={styles.mapCard}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>Location</Text>
           <Text variant="bodyMedium">
             {formatAddress(wholesaler.address)}
           </Text>
-          
-          {/* Map placeholder - in a real app, replace with a map component */}
-          <View style={styles.mapPlaceholder}>
-            <Text>Map view would be displayed here</Text>
-          </View>
-          
-          <Button 
-            mode="outlined" 
-            icon="directions" 
+
+          {/* Map View - shows wholesaler location */}
+          {wholesaler.latitude && wholesaler.longitude ? (
+            <View style={styles.mapContainer}>
+              <MapView
+                style={styles.mapView}
+                initialRegion={{
+                  latitude: wholesaler.latitude,
+                  longitude: wholesaler.longitude,
+                  latitudeDelta: 0.01,
+                  longitudeDelta: 0.01,
+                }}
+                scrollEnabled={false}
+                zoomEnabled={false}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: wholesaler.latitude,
+                    longitude: wholesaler.longitude,
+                  }}
+                  title={wholesaler.business_name}
+                  description={formatAddress(wholesaler.address)}
+                />
+              </MapView>
+            </View>
+          ) : (
+            <View style={styles.mapPlaceholder}>
+              <Text>Location coordinates not available</Text>
+            </View>
+          )}
+
+          <Button
+            mode="outlined"
+            icon="directions"
             style={styles.directionsButton}
-            onPress={() => {/* Handle get directions action */}}
+            onPress={() => {
+              if (wholesaler.latitude && wholesaler.longitude) {
+                const url = Platform.select({
+                  ios: `maps:?daddr=${wholesaler.latitude},${wholesaler.longitude}`,
+                  android: `geo:${wholesaler.latitude},${wholesaler.longitude}?q=${wholesaler.latitude},${wholesaler.longitude}(${encodeURIComponent(wholesaler.business_name || 'Wholesaler')})`,
+                });
+                if (url) {
+                  Linking.openURL(url).catch(() => {
+                    // Fallback to Google Maps URL
+                    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${wholesaler.latitude},${wholesaler.longitude}`);
+                  });
+                }
+              }
+            }}
           >
             Get Directions
           </Button>
         </Card.Content>
       </Card>
-      
+
       {/* Products section */}
       <Card style={styles.productsCard}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>Products</Text>
           <Text variant="bodyMedium">
-            Contact this wholesaler to get information about their products.
+            Browse products from this wholesaler.
           </Text>
-          
-          <Button 
-            mode="contained" 
-            icon="shopping" 
+
+          <Button
+            mode="contained"
+            icon="shopping"
             style={styles.browseButton}
-            onPress={() => {/* Handle browse products action */}}
+            onPress={() => {
+              // Navigate to category screen with wholesaler's seller_id
+              router.push(`/(main)/screens/category/${wholesaler.user_id}`);
+            }}
           >
             Browse Products
           </Button>
@@ -375,6 +418,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 16,
   },
+  mapContainer: {
+    height: 180,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginVertical: 16,
+  },
+  mapView: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
   directionsButton: {
     marginTop: 8,
   },
@@ -382,7 +436,7 @@ const styles = StyleSheet.create({
     margin: 16,
     borderRadius: 10,
     elevation: 2,
-    marginBottom: 24,
+    marginBottom: 100,
   },
   browseButton: {
     marginTop: 16,

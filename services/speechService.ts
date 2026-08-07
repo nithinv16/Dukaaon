@@ -266,6 +266,20 @@ class UnifiedSpeechService {
       return { azure: false };
     }
   }
+
+  /**
+   * Get voice names for a specific language
+   * @param language - Language code
+   * @returns string[] - Array of voice names
+   */
+  getVoiceNames(language: string): string[] {
+    try {
+      return this.azureService.getVoiceNames(language);
+    } catch (error) {
+      console.error('Failed to get voice names:', error);
+      return [];
+    }
+  }
 }
 
 // Export singleton instance

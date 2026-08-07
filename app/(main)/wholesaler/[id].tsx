@@ -8,7 +8,7 @@ export default function WholesalerProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [inventory, setInventory] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   // UUID validation regex
   const isValidUUID = (uuid: string) => {

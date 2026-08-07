@@ -1,40 +1,17 @@
-import React, { useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { Redirect } from 'expo-router';
 
+/**
+ * Direct redirect to main home screen
+ * 
+ * This file exists as a fallback route for /home navigation.
+ * It immediately redirects to the proper home screen without
+ * showing any loading state to minimize navigation latency.
+ * 
+ * **Validates: Requirements 5.1** - Navigation redirect minimization
+ * The redirect is instant (no useEffect delay) to reduce redirect chain latency.
+ */
 export default function DirectHome() {
-  const router = useRouter();
-
-  useEffect(() => {
-    // Attempt direct navigation to the proper home screen
-    console.log('Direct home route: redirecting to proper home screen');
-    
-    // Using a timeout to let screen mount first
-    const timer = setTimeout(() => {
-      router.replace('/(main)/home/');
-    }, 100);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
-  return (
-    <View style={styles.container}>
-      <ActivityIndicator size="large" color="#FF7D00" />
-      <Text style={styles.text}>Loading home screen...</Text>
-    </View>
-  );
+  // Instant redirect - no loading state, no delay
+  // This minimizes the redirect chain from index.tsx → home → (main)/home
+  return <Redirect href="/(main)/home/" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  text: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#333',
-  },
-});

@@ -7,6 +7,8 @@ import { supabase } from '../../../../services/supabase/supabase';
 import { useCartStore } from '../../../../store/cart';
 import CartIcon from '../../../../components/CartIcon';
 import { useWishlistStore } from '../../../../store/wishlist';
+import { useLocationStore } from '../../../../store/location';
+import { useAuthStore } from '../../../../store/auth';
 
 interface Product {
   id: string;
@@ -35,6 +37,9 @@ export default function CategoryProducts() {
   const { category, subcategory } = useLocalSearchParams();
   const router = useRouter();
   const addToCart = useCartStore(state => state.addToCart);
+  const { distanceFilter } = useLocationStore();
+  const user = useAuthStore(state => state.user);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'wholesaler' | 'manufacturer'>('all');
@@ -59,11 +64,41 @@ export default function CategoryProducts() {
     return texts[key] || key;
   };
 
+  // Fetch user location from profiles table
+  useEffect(() => {
+    const fetchUserLocation = async () => {
+      if (!user?.id) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('latitude, longitude')
+          .eq('id', user.id)
+          .single();
+
+        if (!error && data && data.latitude && data.longitude) {
+          setUserLocation({
+            latitude: Number(data.latitude),
+            longitude: Number(data.longitude)
+          });
+        } else {
+          console.log('[CategoryProducts] No location found in profiles table');
+          setUserLocation(null);
+        }
+      } catch (error) {
+        console.error('[CategoryProducts] Error fetching user location from profiles:', error);
+        setUserLocation(null);
+      }
+    };
+
+    fetchUserLocation();
+  }, [user?.id]);
+
   useEffect(() => {
     console.log('Fetching products with:', { category, subcategory });
     fetchProducts();
     loadWishlist();
-  }, [category, subcategory]);
+  }, [category, subcategory, distanceFilter, userLocation]);
 
   const fetchProducts = async () => {
     try {
@@ -76,6 +111,50 @@ export default function CategoryProducts() {
         query = query.eq('subcategory', subcategory);
       } else if (category !== 'all') {
         query = query.eq('category', category);
+      }
+
+      // Apply distance filter (only show products from sellers within distanceFilter km)
+      if (userLocation) {
+        try {
+          // Get nearby wholesalers and manufacturers within distance range
+          const [wholesalersResult, manufacturersResult] = await Promise.all([
+            supabase.rpc('find_nearby_wholesalers', {
+              user_lat: userLocation.latitude,
+              user_lng: userLocation.longitude,
+              radius_km: distanceFilter
+            }),
+            supabase.rpc('find_nearby_manufacturers', {
+              user_lat: userLocation.latitude,
+              user_lng: userLocation.longitude,
+              radius_km: distanceFilter
+            })
+          ]);
+
+          const nearbySellerIds: string[] = [];
+
+          // Add wholesaler IDs
+          if (!wholesalersResult.error && wholesalersResult.data) {
+            nearbySellerIds.push(...wholesalersResult.data.map((seller: any) => seller.user_id));
+          }
+
+          // Add manufacturer IDs
+          if (!manufacturersResult.error && manufacturersResult.data) {
+            nearbySellerIds.push(...manufacturersResult.data.map((seller: any) => seller.user_id));
+          }
+
+          if (nearbySellerIds.length > 0) {
+            // Filter query to only include products from nearby sellers
+            query = query.in('seller_id', nearbySellerIds);
+          } else {
+            // If no nearby sellers found, continue without distance filter
+            // This allows users to see products even if no sellers are within the selected radius
+            console.log('[CategoryProducts] No nearby sellers found within', distanceFilter, 'km. Showing all products.');
+            // Continue with the query without distance filtering
+          }
+        } catch (error) {
+          console.error('[CategoryProducts] Error fetching nearby sellers:', error);
+          // Continue without distance filter if there's an error
+        }
       }
 
       const { data: productsData, error: productsError } = await query;

@@ -1,8 +1,8 @@
 // Final Comprehensive Conflict Resolver
 // This is the ultimate solution to eliminate all Android Support Library conflicts
 
-// Apply this script to completely resolve duplicate class issues
-apply plugin: 'com.android.application'
+// NOTE: This is a configuration script - do NOT apply plugins here
+// The target project must already have 'com.android.application' plugin applied
 
 // Global project configuration
 project.ext {

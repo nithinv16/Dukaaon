@@ -3,6 +3,10 @@ import { Profile } from '../../types/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ProfileMonitor } from '../monitoring/profileMonitor';
 import NetInfo from '@react-native-community/netinfo';
+import { LoggingService } from '../logging';
+
+// Create scoped logger for ProfileLoader
+const logger = LoggingService.createScope('ProfileLoader');
 
 interface ProfileLoadOptions {
   userId: string;
@@ -23,7 +27,8 @@ interface ProfileLoadResult {
 export class ProfileLoader {
   private static readonly CACHE_KEY_PREFIX = 'profile_cache_';
   private static readonly CACHE_EXPIRY_KEY_PREFIX = 'profile_cache_expiry_';
-  private static readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+  private static readonly CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours - use stale cache, don't delete
+  private static readonly STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes - trigger background refresh after this
 
   /**
    * Load profile with progressive loading strategy
@@ -32,7 +37,7 @@ export class ProfileLoader {
     const startTime = Date.now();
     const {
       userId,
-      timeout = 15000,
+      timeout = 20000, // Increased from 15000ms to 20000ms for better cold start handling
       maxRetries = 3,
       useCache = true
     } = options;
@@ -52,10 +57,10 @@ export class ProfileLoader {
 
       // Try to load from cache first
       if (useCache) {
-        console.log('ProfileLoader: useCache=true, attempting cache load');
+        logger.debug('useCache=true, attempting cache load');
         const cachedProfile = await this.loadFromCache(userId);
         if (cachedProfile) {
-          console.log('ProfileLoader: ✅ Profile successfully loaded from cache');
+          logger.info('Profile successfully loaded from cache');
           
           // Record successful cache hit
           await ProfileMonitor.recordFetch({
@@ -75,18 +80,18 @@ export class ProfileLoader {
             loadTime: Date.now() - startTime
           };
         } else {
-          console.log('ProfileLoader: ⚠️ Cache miss, will fetch from database');
+          logger.debug('Cache miss, will fetch from database');
         }
       } else {
-        console.log('ProfileLoader: useCache=false, skipping cache');
+        logger.debug('useCache=false, skipping cache');
       }
 
       // Load essential profile data first
-      console.log('ProfileLoader: Fetching essential profile from database');
+      logger.debug('Fetching essential profile from database');
       const essentialProfile = await this.loadEssentialProfile(userId, timeout, maxRetries);
       
       if (essentialProfile) {
-        console.log('ProfileLoader: ✅ Essential profile fetched successfully');
+        logger.info('Essential profile fetched successfully');
         // Cache the essential profile
         await this.saveToCache(userId, essentialProfile);
         
@@ -111,16 +116,16 @@ export class ProfileLoader {
       }
 
       // If we reach here, profile loading failed
-      console.error('ProfileLoader: ❌ Profile not found after all retries');
+      logger.warn('Profile not found after all retries');
       errorMessage = 'Profile not found after all retries';
       
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Unknown error';
       // Log as debug for expected PGRST116 errors, otherwise as error
       if (error instanceof Error && error.message?.includes('PGRST116')) {
-        console.debug('Profile availability check completed - profile not found (expected for new users):', error);
+        logger.debug('Profile availability check completed - profile not found (expected for new users)');
       } else {
-        console.error('Profile loading error:', error);
+        logger.error('Profile loading error', error);
       }
     }
 
@@ -143,7 +148,11 @@ export class ProfileLoader {
   }
 
   /**
-   * Load essential profile data only
+   * Load essential profile data only with exponential backoff retry
+   * Retry delays: 1s, 2s, 4s (exponential backoff)
+   * Falls back to cached profile after 3 failed attempts
+   * 
+   * Requirements: 1.4
    */
   private static async loadEssentialProfile(
     userId: string,
@@ -151,6 +160,8 @@ export class ProfileLoader {
     maxRetries: number
   ): Promise<Profile | null> {
     let retryCount = 0;
+    // Exponential backoff delays: 1s, 2s, 4s
+    const RETRY_DELAYS = [1000, 2000, 4000];
     
     while (retryCount < maxRetries) {
       try {
@@ -179,24 +190,32 @@ export class ProfileLoader {
           throw error;
         }
         
-        console.log('ProfileLoader: Loaded essential profile - business_details:', !!data?.business_details, 'seller_details:', !!data?.seller_details);
+        logger.debug('Loaded essential profile', { hasBusiness: !!data?.business_details, hasSeller: !!data?.seller_details });
         return data;
       } catch (error: any) {
         retryCount++;
         // Log as debug since PGRST116 (no rows) is expected when checking profile availability
         if (error?.code === 'PGRST116') {
-          console.debug(`Essential profile fetch attempt ${retryCount}/${maxRetries} - profile not found (expected):`, error);
+          logger.debug(`Essential profile fetch attempt ${retryCount}/${maxRetries} - profile not found (expected)`);
         } else {
-          console.log(`Essential profile fetch attempt ${retryCount}/${maxRetries} failed:`, error);
+          logger.debug(`Retry ${retryCount}/${maxRetries} failed`, { error: error?.message || error });
         }
         
         if (retryCount < maxRetries) {
-          // Exponential backoff
-          const delay = Math.pow(2, retryCount - 1) * 1000;
+          // Exponential backoff with explicit delays: 1s, 2s, 4s
+          const delay = RETRY_DELAYS[retryCount - 1] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
+          logger.debug(`Waiting ${delay}ms before retry ${retryCount + 1}`);
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
+          // After 3 failed attempts, try to fall back to cached data
+          logger.debug('All retries exhausted, attempting cache fallback');
+          const cachedProfile = await this.loadFromCache(userId);
+          if (cachedProfile) {
+            logger.info('Falling back to cached profile after failed retries');
+            return cachedProfile;
+          }
           // Log as debug since this is expected behavior when profile doesn't exist
-          console.debug('Profile not found after all retries - this is expected for new users');
+          logger.debug('Profile not found after all retries - this is expected for new users');
           return null;
         }
       }
@@ -210,7 +229,7 @@ export class ProfileLoader {
    */
   private static async loadAdditionalDetailsInBackground(userId: string): Promise<void> {
     try {
-      console.log('Loading additional profile details in background...');
+      logger.debug('Loading additional profile details in background...');
       
       const { data, error } = await supabase
         .from('profiles')
@@ -219,7 +238,7 @@ export class ProfileLoader {
         .single();
       
       if (error) {
-        console.warn('Failed to load additional profile details:', error);
+        logger.warn('Failed to load additional profile details', { error });
         return;
       }
       
@@ -228,56 +247,114 @@ export class ProfileLoader {
       if (cachedProfile && data) {
         const updatedProfile = { ...cachedProfile, ...data };
         await this.saveToCache(userId, updatedProfile);
-        console.log('Updated cache with additional profile details');
+        logger.debug('Updated cache with additional profile details');
       }
     } catch (error) {
-      console.warn('Error loading additional profile details:', error);
+      logger.warn('Error loading additional profile details', { error });
     }
   }
 
   /**
-   * Load profile from cache
+   * Load profile from cache with stale-while-revalidate pattern
+   * Returns cached data immediately if available, triggers background refresh if stale
+   * **Validates: Requirements 2.4**
    */
   private static async loadFromCache(userId: string): Promise<Profile | null> {
     try {
       const cacheKey = this.CACHE_KEY_PREFIX + userId;
       const expiryKey = this.CACHE_EXPIRY_KEY_PREFIX + userId;
       
-      console.log('ProfileLoader: Checking cache for user:', userId);
-      console.log('ProfileLoader: Cache keys -', cacheKey, expiryKey);
+      logger.debug('Checking cache for user', { userId });
       
       const [cachedData, expiryTime] = await Promise.all([
         AsyncStorage.getItem(cacheKey),
         AsyncStorage.getItem(expiryKey)
       ]);
       
-      console.log('ProfileLoader: Cache check results - hasData:', !!cachedData, 'hasExpiry:', !!expiryTime);
+      logger.debug('Cache check results', { hasData: !!cachedData, hasExpiry: !!expiryTime });
       
       if (!cachedData || !expiryTime) {
-        console.log('ProfileLoader: ❌ No cached data or expiry time found');
+        logger.debug('No cached data or expiry time found');
         return null;
       }
       
       const expiryTimestamp = parseInt(expiryTime);
       const currentTime = Date.now();
+      const cacheAge = currentTime - (expiryTimestamp - this.CACHE_DURATION);
+      const isStale = cacheAge >= this.STALE_THRESHOLD;
       const isExpired = currentTime > expiryTimestamp;
       const timeUntilExpiry = expiryTimestamp - currentTime;
       
-      console.log('ProfileLoader: Cache timing - expired:', isExpired, 'timeUntilExpiry:', Math.round(timeUntilExpiry / 1000), 'seconds');
-      
-      // Check if cache is expired
-      if (isExpired) {
-        console.log('ProfileLoader: ⚠️ Cache expired, clearing...');
-        await this.clearCache(userId);
-        return null;
-      }
+      logger.debug('Cache timing', { 
+        ageSeconds: Math.round(cacheAge / 1000), 
+        isStale, 
+        isExpired, 
+        timeUntilExpirySeconds: Math.round(timeUntilExpiry / 1000) 
+      });
       
       const profile = JSON.parse(cachedData);
-      console.log('ProfileLoader: ✅ Valid cache found - role:', profile?.role, 'hasBusiness:', !!profile?.business_details, 'hasSeller:', !!profile?.seller_details);
+      
+      // Stale-While-Revalidate: Use cache if available, trigger background refresh if stale
+      if (isStale || isExpired) {
+        logger.debug('Cache is stale/expired, returning stale profile for instant UX');
+        
+        // Trigger background refresh (non-blocking)
+        this.refreshProfileInBackground(userId).catch(error => {
+          logger.warn('Background refresh failed (non-critical)', { error });
+        });
+        
+        return profile;
+      }
+      
+      logger.debug('Fresh cache found', { role: profile?.role, hasBusiness: !!profile?.business_details, hasSeller: !!profile?.seller_details });
       return profile;
     } catch (error) {
-      console.error('ProfileLoader: ❌ Error loading from cache:', error);
+      logger.error('Error loading from cache', error);
       return null;
+    }
+  }
+
+  /**
+   * Refresh profile in background (non-blocking)
+   * Used by stale-while-revalidate pattern
+   * 
+   * This method:
+   * 1. Fetches fresh profile data from database
+   * 2. Updates the cache with fresh data
+   * 3. Does NOT trigger coordinator (coordinator already triggered by initial profile load)
+   * 
+   * Requirements: 1.1, 1.2, 2.1
+   */
+  private static async refreshProfileInBackground(userId: string): Promise<void> {
+    logger.debug('Starting background refresh', { userId });
+    
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select(`
+          id, 
+          phone_number, 
+          role, 
+          status, 
+          created_at, 
+          updated_at, 
+          business_details,
+          seller_details:seller_details(*)
+        `)
+        .eq('id', userId)
+        .single();
+      
+      if (error) {
+        logger.warn('Background refresh query failed', { error });
+        return;
+      }
+      
+      if (profile) {
+        logger.debug('Background refresh successful, updating cache');
+        await this.saveToCache(userId, profile);
+      }
+    } catch (error) {
+      logger.warn('Background refresh error', { error });
     }
   }
 
@@ -295,9 +372,9 @@ export class ProfileLoader {
         AsyncStorage.setItem(expiryKey, expiryTime.toString())
       ]);
       
-      console.log('Profile saved to cache');
+      logger.debug('Profile saved to cache');
     } catch (error) {
-      console.warn('Error saving profile to cache:', error);
+      logger.warn('Error saving profile to cache', { error });
     }
   }
 
@@ -314,9 +391,9 @@ export class ProfileLoader {
         AsyncStorage.removeItem(expiryKey)
       ]);
       
-      console.log('Profile cache cleared');
+      logger.debug('Profile cache cleared');
     } catch (error) {
-      console.warn('Error clearing profile cache:', error);
+      logger.warn('Error clearing profile cache', { error });
     }
   }
 
@@ -333,10 +410,10 @@ export class ProfileLoader {
       
       if (cacheKeys.length > 0) {
         await AsyncStorage.multiRemove(cacheKeys);
-        console.log(`Cleared ${cacheKeys.length} profile cache entries`);
+        logger.debug(`Cleared ${cacheKeys.length} profile cache entries`);
       }
     } catch (error) {
-      console.warn('Error clearing all profile caches:', error);
+      logger.warn('Error clearing all profile caches', { error });
     }
   }
 }

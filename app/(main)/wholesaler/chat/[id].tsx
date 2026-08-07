@@ -22,7 +22,7 @@ export default function CustomerChat() {
   const { currentLanguage } = useLanguage();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [translations, setTranslations] = useState({
     customerChat: 'Customer Chat',
     typeMessage: 'Type a message...',
@@ -60,7 +60,7 @@ export default function CustomerChat() {
         translationService.translateText('Message delivered', currentLanguage),
         translationService.translateText('Message read', currentLanguage)
       ]);
-  
+
       setTranslations({
         chat: results[0].translatedText,
         typeMessage: results[1].translatedText,
@@ -161,7 +161,7 @@ export default function CustomerChat() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
+        <IconButton
           icon="arrow-left"
           onPress={() => router.back()}
         />
@@ -196,7 +196,7 @@ export default function CustomerChat() {
           onChangeText={setNewMessage}
           placeholder={translations.typeMessage}
           right={
-            <TextInput.Icon 
+            <TextInput.Icon
               icon="send"
               onPress={sendMessage}
             />

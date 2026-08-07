@@ -28,7 +28,7 @@ export default function CustomerOrders() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { currentLanguage } = useLanguage();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [translations, setTranslations] = useState({
     orderHistory: 'Order History',
     orderNumber: 'Order #',
@@ -56,27 +56,27 @@ export default function CustomerOrders() {
   useEffect(() => {
     const loadTranslations = async () => {
       if (currentLanguage === 'en') return;
-      
+
       try {
         const results = await Promise.all([
-        translationService.translateText('Order History', currentLanguage),
-        translationService.translateText('Order #', currentLanguage),
-        translationService.translateText('Total Amount', currentLanguage),
-        translationService.translateText('Status', currentLanguage),
-        translationService.translateText('Payment Status', currentLanguage),
-        translationService.translateText('Order Date', currentLanguage),
-        translationService.translateText('Items', currentLanguage),
-        translationService.translateText('View Details', currentLanguage),
-        translationService.translateText('Pending', currentLanguage),
-        translationService.translateText('Confirmed', currentLanguage),
-        translationService.translateText('Shipped', currentLanguage),
-        translationService.translateText('Delivered', currentLanguage),
-        translationService.translateText('Cancelled', currentLanguage),
-        translationService.translateText('Completed', currentLanguage),
-        translationService.translateText('Failed', currentLanguage),
-        translationService.translateText('No orders found', currentLanguage),
-        translationService.translateText('This customer has not placed any orders yet.', currentLanguage)
-      ]);
+          translationService.translateText('Order History', currentLanguage),
+          translationService.translateText('Order #', currentLanguage),
+          translationService.translateText('Total Amount', currentLanguage),
+          translationService.translateText('Status', currentLanguage),
+          translationService.translateText('Payment Status', currentLanguage),
+          translationService.translateText('Order Date', currentLanguage),
+          translationService.translateText('Items', currentLanguage),
+          translationService.translateText('View Details', currentLanguage),
+          translationService.translateText('Pending', currentLanguage),
+          translationService.translateText('Confirmed', currentLanguage),
+          translationService.translateText('Shipped', currentLanguage),
+          translationService.translateText('Delivered', currentLanguage),
+          translationService.translateText('Cancelled', currentLanguage),
+          translationService.translateText('Completed', currentLanguage),
+          translationService.translateText('Failed', currentLanguage),
+          translationService.translateText('No orders found', currentLanguage),
+          translationService.translateText('This customer has not placed any orders yet.', currentLanguage)
+        ]);
 
         setTranslations({
           orderHistory: results[0].translatedText,
@@ -162,7 +162,7 @@ export default function CustomerOrders() {
               {new Date(order.created_at).toLocaleDateString()}
             </Text>
           </View>
-          <Chip 
+          <Chip
             mode="flat"
             style={{ backgroundColor: getStatusColor(order.status) + '20' }}
             textStyle={{ color: getStatusColor(order.status) }}
@@ -205,7 +205,7 @@ export default function CustomerOrders() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
+        <IconButton
           icon="arrow-left"
           onPress={() => router.back()}
         />

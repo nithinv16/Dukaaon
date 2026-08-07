@@ -69,8 +69,8 @@ export function Header() {
               <img 
                 src="/logo.png" 
                 alt="DukaaOn" 
-                className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 object-cover"
-                style={{ width: '180px', height: '46px' }}
+                className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 object-contain px-3 py-1"
+                style={{ width: '180px', height: '52px' }}
               />
             </Link>
           </div>

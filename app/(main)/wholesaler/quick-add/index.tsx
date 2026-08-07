@@ -2,10 +2,30 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, StyleSheet, Image, Alert, FlatList, ActivityIndicator, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, DataTable, TextInput, Checkbox, Button, IconButton, Searchbar, Chip, SegmentedButtons, Modal, Portal, HelperText, Card } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { supabase } from '../../../../services/supabase/supabase';
+import { supabase, directFetch } from '../../../../services/supabase/supabase';
 import { useAuthStore } from '../../../../store/auth';
 import { useLanguage } from '../../../../contexts/LanguageContext';
 import { translationService } from '../../../../services/translationService';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SystemStatusBar } from '../../../../components/SystemStatusBar';
+import { supabaseConfig } from '../../../../config/secrets';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// --- Wholesaler Premium Theme (Navy/Teal) ---
+const THEME = {
+  primary: '#001F3F',    // Navy Blue
+  secondary: '#39CCCC',  // Teal
+  accent: '#7FDBFF',     // Sky Blue
+  background: 'transparent',
+  card: '#FFFFFF',
+  textPrimary: '#111111',
+  textSecondary: '#666666',
+  success: '#39CCCC',    // Teal
+  error: '#FF4136',
+  warning: '#FF851B',
+  divider: '#E0E0E0',
+  inputBackground: '#F8F9FA',
+};
 
 
 interface QuickAddProduct {
@@ -38,7 +58,7 @@ export default function QuickAddProducts() {
 
   // State variables
   const [products, setProducts] = useState<QuickAddProduct[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start false - will be true only when actually fetching
   const [pageLoading, setPageLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -55,6 +75,8 @@ export default function QuickAddProducts() {
   const [totalPages, setTotalPages] = useState(0);
   const [totalProductsCount, setTotalProductsCount] = useState(0);
   const [selectedProducts, setSelectedProducts] = useState<QuickAddProduct[]>([]);
+  // Map to track selected products across pagination (keyed by product ID)
+  const [selectedProductsMap, setSelectedProductsMap] = useState<Map<string, QuickAddProduct>>(new Map());
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<QuickAddProduct | null>(null);
@@ -154,7 +176,7 @@ export default function QuickAddProducts() {
           subcategory: results[4].translatedText,
           brand: results[5].translatedText,
           sortBy: results[6].translatedText,
-          clearFilters: results[7].translatedText,
+          clearAllFilters: results[7].translatedText,
           image: results[8].translatedText,
           product: results[9].translatedText,
           price: results[10].translatedText,
@@ -166,9 +188,9 @@ export default function QuickAddProducts() {
           cancel: results[16].translatedText,
           addSelectedProducts: results[17].translatedText,
           noProductsSelected: results[18].translatedText,
-          selectProductsMessage: results[19].translatedText,
+          pleaseSelectProducts: results[19].translatedText,
           success: results[20].translatedText,
-          productsAddedSuccess: results[21].translatedText,
+          productsAddedSuccessfully: results[21].translatedText,
           error: results[22].translatedText,
           failedToAddProducts: results[23].translatedText,
           ok: results[24].translatedText,
@@ -195,103 +217,132 @@ export default function QuickAddProducts() {
   // Function to fetch unique categories from master_products
   const fetchCategories = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('master_products')
-        .select('category')
-        .not('category', 'is', null)
-        .order('category');
-      
+      console.log('fetchCategories: Starting...');
+      const { data, error } = await directFetch<{ category: string }>('master_products', {
+        select: 'category',
+        order: { column: 'category', ascending: true }
+      });
+
       if (error) throw error;
-      
+
       const uniqueCategories = Array.from(new Set(data?.map(item => item.category).filter(Boolean) || []));
       setAvailableCategories([translations.all, ...uniqueCategories]);
-    } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.log('fetchCategories: Found', uniqueCategories.length, 'categories');
+    } catch (error: any) {
+      console.error('fetchCategories: Error:', error?.message);
     }
-  }, []);
+  }, [translations.all]);
 
   // Function to fetch unique subcategories from master_products
   const fetchSubcategories = useCallback(async (category?: string) => {
     try {
-      let query = supabase
-        .from('master_products')
-        .select('subcategory')
-        .not('subcategory', 'is', null)
-        .order('subcategory');
-      
+      console.log('fetchSubcategories: Starting...');
+      const eqFilters: Record<string, any> = {};
       if (category && category !== 'All') {
-        query = query.eq('category', category);
+        eqFilters.category = category;
       }
-      
-      const { data, error } = await query;
-      
+
+      const { data, error } = await directFetch<{ subcategory: string }>('master_products', {
+        select: 'subcategory',
+        eq: eqFilters,
+        order: { column: 'subcategory', ascending: true }
+      });
+
       if (error) throw error;
-      
+
       const uniqueSubcategories = Array.from(new Set(data?.map(item => item.subcategory).filter(Boolean) || []));
       setAvailableSubcategories(['All', ...uniqueSubcategories]);
-    } catch (error) {
-      console.error('Error fetching subcategories:', error);
+      console.log('fetchSubcategories: Found', uniqueSubcategories.length, 'subcategories');
+    } catch (error: any) {
+      console.error('fetchSubcategories: Error:', error?.message);
     }
   }, []);
 
   // Function to fetch unique brands from master_products
   const fetchBrands = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('master_products')
-        .select('brand')
-        .not('brand', 'is', null)
-        .order('brand');
-      
+      console.log('fetchBrands: Starting...');
+      const { data, error } = await directFetch<{ brand: string }>('master_products', {
+        select: 'brand',
+        order: { column: 'brand', ascending: true }
+      });
+
       if (error) throw error;
-      
+
       const uniqueBrands = Array.from(new Set(data?.map(item => item.brand).filter(Boolean) || []));
       setAvailableBrands(['All', ...uniqueBrands]);
-    } catch (error) {
-      console.error('Error fetching brands:', error);
+      console.log('fetchBrands: Found', uniqueBrands.length, 'brands');
+    } catch (error: any) {
+      console.error('fetchBrands: Error:', error?.message);
     }
   }, []);
 
   // Function to get total count of products for pagination
   const getTotalProductsCount = useCallback(async (searchTerm: string = '') => {
     try {
-      let query = supabase
-        .from('master_products')
-        .select('*', { count: 'exact', head: true });
+      console.log('getTotalProductsCount: Starting...');
 
-      // Add search filter if search term exists
+      // Get access token
+      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
+      let accessToken = '';
+      if (sessionStr) {
+        const sessionData = JSON.parse(sessionStr);
+        accessToken = sessionData?.access_token || '';
+      }
+
+      if (!accessToken) {
+        console.warn('getTotalProductsCount: No access token');
+        return { totalCount: 0, pages: 0 };
+      }
+
+      // Build URL with filters
+      let url = `${supabaseConfig.url}/rest/v1/master_products?select=id`;
+
       if (searchTerm.trim()) {
-        query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%,category.ilike.%${searchTerm}%,subcategory.ilike.%${searchTerm}%`);
+        url += `&or=(name.ilike.*${encodeURIComponent(searchTerm)}*,brand.ilike.*${encodeURIComponent(searchTerm)}*,category.ilike.*${encodeURIComponent(searchTerm)}*,subcategory.ilike.*${encodeURIComponent(searchTerm)}*)`;
       }
 
-      // Apply category filter if exists
       if (selectedCategory && selectedCategory !== 'All') {
-        query = query.eq('category', selectedCategory);
+        url += `&category=eq.${encodeURIComponent(selectedCategory)}`;
       }
 
-      // Apply subcategory filter if exists
       if (selectedSubcategory && selectedSubcategory !== 'All') {
-        query = query.eq('subcategory', selectedSubcategory);
+        url += `&subcategory=eq.${encodeURIComponent(selectedSubcategory)}`;
       }
 
-      // Apply brand filter if exists
       if (selectedBrand && selectedBrand !== 'All') {
-        query = query.eq('brand', selectedBrand);
+        url += `&brand=eq.${encodeURIComponent(selectedBrand)}`;
       }
 
-      const { count, error } = await query;
+      const response = await fetch(url, {
+        method: 'HEAD',
+        headers: {
+          'apikey': supabaseConfig.anonKey,
+          'Authorization': `Bearer ${accessToken}`,
+          'Prefer': 'count=exact'
+        }
+      });
 
-      if (error) throw error;
+      // Get count from Content-Range header
+      const contentRange = response.headers.get('content-range');
+      let totalCount = 0;
+      if (contentRange) {
+        const match = contentRange.match(/\/(\d+)/);
+        if (match) {
+          totalCount = parseInt(match[1], 10);
+        }
+      }
 
-      const totalCount = count || 0;
       const pages = Math.ceil(totalCount / ITEMS_PER_PAGE);
-      
+      console.log('getTotalProductsCount: Count =', totalCount, 'Pages =', pages);
+
       setTotalProductsCount(totalCount);
       setTotalPages(pages);
-      
+
       return { totalCount, pages };
-    } catch (error) {
-      console.error('Error getting total products count:', error);
+    } catch (error: any) {
+      console.error('getTotalProductsCount: Error:', error?.message);
       return { totalCount: 0, pages: 0 };
     }
   }, [selectedCategory, selectedSubcategory, selectedBrand]);
@@ -299,82 +350,106 @@ export default function QuickAddProducts() {
   const fetchMasterProducts = useCallback(async (page: number = 1, searchTerm: string = '') => {
     try {
       setPageLoading(true);
-      
+      console.log('fetchMasterProducts: Starting with page', page, 'search:', searchTerm);
+
+      // Get access token
+      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
+      let accessToken = '';
+      if (sessionStr) {
+        const sessionData = JSON.parse(sessionStr);
+        accessToken = sessionData?.access_token || '';
+      }
+
+      if (!accessToken) {
+        console.warn('fetchMasterProducts: No access token');
+        setProducts([]);
+        return;
+      }
+
       // Calculate offset for the page (page is 1-based)
       const startIndex = (page - 1) * ITEMS_PER_PAGE;
-      
-      // Build query with search functionality
-      let query = supabase
-        .from('master_products')
-        .select(`
-          id,
-          name,
-          category,
-          subcategory,
-          brand,
-          min_qty,
-          image_url
-        `)
-        .range(startIndex, startIndex + ITEMS_PER_PAGE - 1);
+      const endIndex = startIndex + ITEMS_PER_PAGE - 1;
 
-      // Apply sorting
+      // Build URL with query parameters
       const sortColumn = sortBy === 'name' ? 'name' : sortBy === 'brand' ? 'brand' : 'category';
-      query = query.order(sortColumn, { ascending: sortOrder === 'asc' });
+      let url = `${supabaseConfig.url}/rest/v1/master_products?select=id,name,category,subcategory,brand,min_qty,image_url&order=${sortColumn}.${sortOrder}`;
 
-      // Add search filter if search term exists
+      // Add filters
       if (searchTerm.trim()) {
-        query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%,category.ilike.%${searchTerm}%,subcategory.ilike.%${searchTerm}%`);
+        url += `&or=(name.ilike.*${encodeURIComponent(searchTerm)}*,brand.ilike.*${encodeURIComponent(searchTerm)}*,category.ilike.*${encodeURIComponent(searchTerm)}*,subcategory.ilike.*${encodeURIComponent(searchTerm)}*)`;
       }
 
-      // Apply category filter if exists
       if (selectedCategory && selectedCategory !== 'All') {
-        query = query.eq('category', selectedCategory);
+        url += `&category=eq.${encodeURIComponent(selectedCategory)}`;
       }
 
-      // Apply subcategory filter if exists
       if (selectedSubcategory && selectedSubcategory !== 'All') {
-        query = query.eq('subcategory', selectedSubcategory);
+        url += `&subcategory=eq.${encodeURIComponent(selectedSubcategory)}`;
       }
 
-      // Apply brand filter if exists
       if (selectedBrand && selectedBrand !== 'All') {
-        query = query.eq('brand', selectedBrand);
+        url += `&brand=eq.${encodeURIComponent(selectedBrand)}`;
       }
 
-      const { data: fetchedProducts, error } = await query;
+      console.log('fetchMasterProducts: Using direct fetch API...');
 
-      if (error) {
-        throw error;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'apikey': supabaseConfig.anonKey,
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'Range': `${startIndex}-${endIndex}`
+        }
+      });
+
+      console.log('fetchMasterProducts: Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('fetchMasterProducts: Error:', errorText);
+        throw new Error(errorText);
       }
 
-      // Transform products with optimized mapping
-      const transformedProducts: QuickAddProduct[] = (fetchedProducts || []).map(product => ({
-        id: product.id,
-        name: product.name || translations.productName,
-        brand: product.brand || translations.unknownBrand,
-        image_url: product.image_url,
-        category: product.category || translations.uncategorized,
-        subcategory: product.subcategory || translations.general,
-        selected: false,
-        price: '',
-        minQty: product.min_qty?.toString() || '1',
-        unit: 'pieces',
-        stock: '0'
-      }));
+      const fetchedProducts = await response.json();
+      console.log('fetchMasterProducts: Got', fetchedProducts?.length, 'products');
+
+      // Transform products with optimized mapping - preserve selection state from selectedProductsMap
+      const transformedProducts: QuickAddProduct[] = (fetchedProducts || []).map((product: any) => {
+        const existingSelection = selectedProductsMap.get(product.id);
+        if (existingSelection) {
+          // Preserve the selected product's data
+          return existingSelection;
+        }
+        return {
+          id: product.id,
+          name: product.name || translations.productName,
+          brand: product.brand || translations.unknownBrand,
+          image_url: product.image_url,
+          category: product.category || translations.uncategorized,
+          subcategory: product.subcategory || translations.general,
+          selected: false,
+          price: '',
+          minQty: product.min_qty?.toString() || '1',
+          unit: 'pieces',
+          stock: '0'
+        };
+      });
 
       setProducts(transformedProducts);
       setCurrentPage(page);
-      
+
       // Get total count for pagination
       await getTotalProductsCount(searchTerm);
-      
-    } catch (error) {
-      console.error('Error fetching products:', error);
+
+    } catch (error: any) {
+      console.error('fetchMasterProducts: Error:', error?.message || error);
       Alert.alert(translations.error, translations.failedToLoadProducts);
     } finally {
       setPageLoading(false);
     }
-  }, [selectedCategory, selectedSubcategory, selectedBrand, getTotalProductsCount]);
+  }, [selectedCategory, selectedSubcategory, selectedBrand, sortBy, sortOrder, getTotalProductsCount, selectedProductsMap, translations]);
 
   // Function to navigate to a specific page
   const goToPage = useCallback((page: number) => {
@@ -412,40 +487,49 @@ export default function QuickAddProducts() {
       image: null,
       quantities: [{ value: '1', unit: 'pieces', selected: true, price: '' }]
     });
-    
+
     setShowProductModal(true);
   }, []);
-  
+
   const handleAddSelectedProducts = useCallback(async () => {
     const selectedProducts = products.filter(p => p.selected && p.price);
     if (selectedProducts.length === 0) {
       Alert.alert(translations.noProductsSelected, translations.pleaseSelectProducts);
       return;
     }
-    
+
     setShowConfirmation(true);
   }, [products]);
 
   const handleAddProduct = useCallback(() => {
     if (!selectedProduct || !newProductData.price) return;
 
+    const updatedProduct: QuickAddProduct = {
+      ...selectedProduct,
+      selected: true,
+      price: newProductData.price,
+      minQty: newProductData.minQty,
+      stock: newProductData.stock,
+      unit: newProductData.unit
+    };
+
     // Update the product in the products list
-    setProducts(prevProducts => 
-      prevProducts.map(p => 
-        p.id === selectedProduct.id ? {
-          ...p,
-          selected: true,
-          price: newProductData.price,
-          minQty: newProductData.minQty,
-          stock: newProductData.stock,
-          unit: newProductData.unit
-        } : p
+    setProducts(prevProducts =>
+      prevProducts.map(p =>
+        p.id === selectedProduct.id ? updatedProduct : p
       )
     );
-    
+
+    // Also update the selectedProductsMap to persist selection across pagination
+    setSelectedProductsMap(prevMap => {
+      const newMap = new Map(prevMap);
+      newMap.set(selectedProduct.id, updatedProduct);
+      return newMap;
+    });
+
     setShowProductModal(false);
     setSelectedProduct(null);
-    
+
     // Reset form data
     setNewProductData({
       name: '',
@@ -470,7 +554,7 @@ export default function QuickAddProducts() {
     setSelectedSubcategory('All');
     setSelectedBrand('All');
     setSearchQuery('');
-    
+
     // Reset pagination and fetch all products
     setCurrentPage(1);
     setProducts([]);
@@ -516,21 +600,21 @@ export default function QuickAddProducts() {
   // Effect to handle search with debouncing
   useEffect(() => {
     const query = searchQuery.trim();
-    
+
     // Reset pagination and fetch new data with search
     setCurrentPage(1);
     setProducts([]);
-    
+
     // Debounce the actual search to avoid too many API calls
     const timeoutId = setTimeout(() => {
       fetchMasterProducts(1, query);
     }, 150); // Reduced debounce time for faster response
-    
+
     // Add to search history if it's a meaningful search
     if (query && query.length > 2) {
       setSearchHistory(prev => [query, ...prev.filter(item => item !== query)].slice(0, 5));
     }
-    
+
     return () => clearTimeout(timeoutId);
   }, [searchQuery]); // Removed fetchMasterProducts dependency
 
@@ -541,8 +625,8 @@ export default function QuickAddProducts() {
   }, [products]);
 
   const subcategories = useMemo(() => {
-    const filtered = selectedCategory === 'All' 
-      ? products 
+    const filtered = selectedCategory === 'All'
+      ? products
       : products.filter(p => p.category === selectedCategory);
     const uniqueSubcategories = Array.from(new Set(filtered.map(p => p.subcategory).filter(Boolean)));
     return ['All', ...uniqueSubcategories.sort()];
@@ -558,12 +642,12 @@ export default function QuickAddProducts() {
   // Render pagination controls at bottom
   const renderPaginationControls = useCallback(() => {
     if (totalPages <= 1) return null;
-    
+
     // Generate page numbers to display
     const getPageNumbers = () => {
       const pages = [];
       const maxVisiblePages = 5;
-      
+
       if (totalPages <= maxVisiblePages) {
         // Show all pages if total is small
         for (let i = 1; i <= totalPages; i++) {
@@ -598,7 +682,7 @@ export default function QuickAddProducts() {
       }
       return pages;
     };
-    
+
     return (
       <View style={styles.paginationContainer}>
         <Button
@@ -610,9 +694,9 @@ export default function QuickAddProducts() {
         >
           ‹
         </Button>
-        
-        <ScrollView 
-          horizontal 
+
+        <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.pageNumbersContainer}
           contentContainerStyle={styles.pageNumbersContent}
@@ -625,7 +709,7 @@ export default function QuickAddProducts() {
                 </Text>
               );
             }
-            
+
             const isCurrentPage = page === currentPage;
             return (
               <TouchableOpacity
@@ -647,7 +731,7 @@ export default function QuickAddProducts() {
             );
           })}
         </ScrollView>
-        
+
         <Button
           mode="outlined"
           onPress={goToNextPage}
@@ -677,86 +761,139 @@ export default function QuickAddProducts() {
   }, [selectedCategory, selectedSubcategory, selectedBrand, sortBy, sortOrder]); // Removed fetchMasterProducts and searchQuery to prevent conflicts
 
   const renderProductItem = useCallback(({ item }: { item: QuickAddProduct }) => (
-    <View style={[styles.productItem, item.selected && styles.selectedProductItem]}>
-      <View style={styles.productItemRow}>
-        <View style={styles.imageColumn}>
-          <Image
-            source={{ uri: item.image_url || 'https://via.placeholder.com/35' }}
-            style={styles.productIcon}
-          />
-        </View>
-        
-        <View style={styles.productColumn}>
-          <View style={styles.productInfo}>
-            <Text style={styles.productName} numberOfLines={2}>{item?.name || translations.productName}</Text>
-            <Text style={styles.categoryText}>{item.category} • {item.subcategory}</Text>
-            <Text style={styles.brandText}>{item.brand}</Text>
+    <TouchableOpacity
+      style={[
+        styles.productCard,
+        item.selected && styles.productCardSelected
+      ]}
+      onPress={() => handleProductSelect(item)}
+      activeOpacity={0.9}
+    >
+      <View style={styles.cardMainRow}>
+        <Image
+          source={{ uri: item.image_url || 'https://via.placeholder.com/60' }}
+          style={styles.cardImage}
+        />
+        <View style={styles.cardContent}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardName} numberOfLines={2}>{item?.name || translations.productName}</Text>
+            {item.selected && <IconButton icon="check-circle" iconColor={THEME.secondary} size={20} style={{ margin: 0 }} />}
           </View>
-        </View>
-        
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceText}>{translations.setPrice}</Text>
-        </View>
-        
-        <View style={styles.moqColumn}>
-          <Text style={styles.moqText}>MOQ: {item.minQty}</Text>
-        </View>
-        
-        <View style={styles.selectColumn}>
-          <Button
-            mode={item.selected ? "contained" : "outlined"}
-            onPress={() => handleProductSelect(item)}
-            style={styles.selectButton}
-            labelStyle={styles.selectButtonText}
-          >
-            {translations.select}
-          </Button>
+          <Text style={styles.cardCategory}>{item.category} • {item.subcategory}</Text>
+          <Text style={styles.cardBrand}>{item.brand}</Text>
         </View>
       </View>
-    </View>
-  ), [handleProductSelect]);
+
+      <View style={styles.cardFooter}>
+        <View style={styles.footerInfo}>
+          <Text style={styles.infoLabel}>MOQ: <Text style={styles.infoValue}>{item.minQty}</Text></Text>
+          {item.selected && item.price ? (
+            <Text style={styles.infoLabel}> |  Price: <Text style={[styles.infoValue, { color: THEME.secondary }]}>₹{item.price}</Text></Text>
+          ) : (
+            <Text style={styles.infoLabel}> |  Set Price</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={() => handleProductSelect(item)}
+          style={[
+            styles.selectButton,
+            item.selected && styles.selectButtonSelected
+          ]}
+        >
+          <Text style={[
+            styles.selectButtonText,
+            item.selected && styles.selectButtonTextSelected
+          ]}>
+            {item.selected ? translations.selected : translations.select}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  ), [handleProductSelect, translations]);
 
   // Function to add all selected products to inventory
   const addSelectedProductsToInventory = useCallback(async () => {
     if (!user?.id) return;
-    
-    const selectedProductsList = products.filter(p => p.selected && p.price);
+
+    // Get all selected products from the map (persists across pagination)
+    const selectedProductsList = Array.from(selectedProductsMap.values()).filter(p => p.selected && p.price);
     if (selectedProductsList.length === 0) {
       Alert.alert(translations.noProductsSelected, translations.pleaseSelectProducts);
       return;
     }
-    
-    try {
-      const { error } = await supabase
-        .from('products')
-        .insert(selectedProductsList.map(p => ({
-          seller_id: user.id,
-          name: p.name,
-          brand: p.brand,
-          category: p.category,
-          subcategory: p.subcategory,
-          price: parseFloat(p.price),
-          min_quantity: parseInt(p.minQty) || 1,
-          stock_available: parseInt(p.stock || '0') || 0,
-          unit: p.unit,
-          image_url: p.image_url,
-          status: 'active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })));
 
-      if (error) throw error;
+    try {
+      console.log('addSelectedProductsToInventory: Starting with', selectedProductsList.length, 'products');
+
+      // Get access token for direct fetch
+      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
+      let accessToken = '';
+      if (sessionStr) {
+        const sessionData = JSON.parse(sessionStr);
+        accessToken = sessionData?.access_token || '';
+      }
+
+      if (!accessToken) {
+        Alert.alert(translations.error, 'Not authenticated. Please login again.');
+        return;
+      }
+
+      // Prepare products data
+      const productsToInsert = selectedProductsList.map(p => ({
+        seller_id: user.id,
+        name: p.name,
+        brand: p.brand,
+        category: p.category,
+        subcategory: p.subcategory,
+        price: parseFloat(p.price),
+        min_quantity: parseInt(p.minQty) || 1,
+        stock_available: parseInt(p.stock || '0') || 0,
+        unit: p.unit,
+        image_url: p.image_url,
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+
+      console.log('addSelectedProductsToInventory: Using direct fetch API...');
+
+      // Use direct fetch API instead of Supabase client
+      const response = await fetch(
+        `${supabaseConfig.url}/rest/v1/products`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': supabaseConfig.anonKey,
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify(productsToInsert)
+        }
+      );
+
+      console.log('addSelectedProductsToInventory: Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('addSelectedProductsToInventory: Error:', errorText);
+        throw new Error(errorText);
+      }
+
+      console.log('addSelectedProductsToInventory: Products added successfully');
 
       Alert.alert(
         translations.success,
         translations.productsAddedSuccessfully,
         [{ text: translations.ok }]
       );
-      
+
       setShowConfirmation(false);
-      
-      // Reset selected products
-      setProducts(prevProducts => 
+
+      // Reset selected products and clear the selection map
+      setSelectedProductsMap(new Map());
+      setProducts(prevProducts =>
         prevProducts.map(p => ({
           ...p,
           selected: false,
@@ -764,17 +901,17 @@ export default function QuickAddProducts() {
           stock: '0'
         }))
       );
-      
-    } catch (error) {
-      console.error('Error adding products:', error);
+
+    } catch (error: any) {
+      console.error('addSelectedProductsToInventory: Error:', error?.message || error);
       Alert.alert(
         translations.error,
         translations.failedToAddProducts,
         [{ text: translations.ok }]
       );
     }
-  }, [products, user?.id]);
-  
+  }, [products, user?.id, selectedProductsMap, translations]);
+
   // Render confirmation modal
   const renderConfirmationModal = () => (
     <Portal>
@@ -795,9 +932,9 @@ export default function QuickAddProducts() {
             style={styles.closeButton}
           />
         </View>
-        
+
         <ScrollView style={styles.modalScroll}>
-          {products.filter(p => p.selected && p.price).map((product) => (
+          {Array.from(selectedProductsMap.values()).filter(p => p.selected && p.price).map((product) => (
             <Card key={product.id} style={styles.confirmationCard}>
               <Card.Content>
                 <View style={styles.confirmationRow}>
@@ -815,7 +952,7 @@ export default function QuickAddProducts() {
             </Card>
           ))}
         </ScrollView>
-        
+
         <View style={styles.modalActions}>
           <Button
             mode="outlined"
@@ -838,16 +975,53 @@ export default function QuickAddProducts() {
       </Modal>
     </Portal>
   );
-  
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <IconButton
-          icon="arrow-left"
-          size={24}
-          onPress={() => router.back()}
+      <SystemStatusBar style="light" backgroundColor="transparent" translucent />
+
+      {/* Light Orange Gradient Background */}
+      <LinearGradient
+        colors={['#FFF3E0', '#FFFFFF', '#FFF8E1']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Decorative Gradient Background for Header */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, backgroundColor: THEME.primary, overflow: 'hidden' }}>
+        <LinearGradient
+          colors={[THEME.primary, '#003366']}
+          style={StyleSheet.absoluteFillObject}
         />
-        <Text variant="titleLarge" style={styles.headerTitle}>
+        {/* Subtle decorative circles */}
+        <View style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+        <View style={{ position: 'absolute', bottom: -20, left: -20, width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+      </View>
+
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: 'rgba(255, 255, 255, 0.15)',
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.2)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          onPress={() => router.back()}
+        >
+          <IconButton
+            icon="arrow-left"
+            size={24}
+            iconColor="#FFFFFF"
+            onPress={() => router.back()}
+            style={{ margin: 0 }}
+          />
+        </TouchableOpacity>
+        <Text variant="titleLarge" style={[styles.headerTitle, { color: '#FFFFFF' }]}>
           {translations.quickAddProducts}
         </Text>
 
@@ -879,14 +1053,14 @@ export default function QuickAddProducts() {
 
       {/* Filter and Sort Controls */}
       <View style={styles.filterContainer}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.filterToggleButton}
           onPress={() => setShowFilters(!showFilters)}
         >
           <Text style={styles.filterToggleText}>{translations.filtersSort}</Text>
           <Text style={styles.filterToggleIcon}>{showFilters ? '▲' : '▼'}</Text>
         </TouchableOpacity>
-        
+
         {showFilters && (
           <View style={styles.filtersContent}>
             {/* Category Filter */}
@@ -995,13 +1169,7 @@ export default function QuickAddProducts() {
       </View>
 
       <View style={styles.listContainer}>
-        <View style={styles.flatListHeader}>
-          <Text style={[styles.headerText, { flex: 0.12 }]}>{translations.image}</Text>
-          <Text style={[styles.headerText, { flex: 0.35 }]}>{translations.product}</Text>
-          <Text style={[styles.headerText, { flex: 0.18 }]}>{translations.price}</Text>
-          <Text style={[styles.headerText, { flex: 0.15 }]}>{translations.moq}</Text>
-          <Text style={[styles.headerText, { flex: 0.2 }]}>{translations.action}</Text>
-        </View>
+        {/* Header Removed for cleaner Card Layout */}
 
         {loading || pageLoading ? (
           <View style={styles.loadingFooter}>
@@ -1031,21 +1199,21 @@ export default function QuickAddProducts() {
           </>
         )}
       </View>
-      
+
       {/* Add Selected Products Button */}
-      <View style={styles.bottomButtonContainer}>
+      <View style={styles.bottomButtonContainer} pointerEvents="box-none">
         <Button
           mode="contained"
           onPress={handleAddSelectedProducts}
           style={styles.addSelectedButton}
           labelStyle={styles.addSelectedButtonLabel}
           icon="plus"
-          disabled={!products.some(p => p.selected && p.price)}
+          disabled={selectedProductsMap.size === 0 || !Array.from(selectedProductsMap.values()).some(p => p.selected && p.price)}
         >
           Add Selected Products
         </Button>
       </View>
-      
+
       {/* Product Details Modal */}
       <Portal>
         <Modal
@@ -1067,7 +1235,7 @@ export default function QuickAddProducts() {
                   style={styles.closeButton}
                 />
               </View>
-              
+
               <ScrollView style={styles.modalScroll}>
                 <View style={styles.productDetails}>
                   <View style={styles.productHeader}>
@@ -1077,7 +1245,7 @@ export default function QuickAddProducts() {
                       <Text style={styles.productBadgeText}>New Product</Text>
                     </View>
                   </View>
-                  
+
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>Set Your Price *</Text>
                     <View style={styles.inputWithUnit}>
@@ -1093,7 +1261,7 @@ export default function QuickAddProducts() {
                     </View>
                     <Text style={styles.helperText}>Enter the selling price per unit</Text>
                   </View>
-                  
+
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>Minimum Quantity</Text>
                     <View style={styles.inputWithUnit}>
@@ -1109,7 +1277,7 @@ export default function QuickAddProducts() {
                     </View>
                     <Text style={styles.helperText}>Minimum order quantity for customers</Text>
                   </View>
-                  
+
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>Initial Stock</Text>
                     <View style={styles.inputWithUnit}>
@@ -1125,7 +1293,7 @@ export default function QuickAddProducts() {
                     </View>
                     <Text style={styles.helperText}>Current available stock quantity</Text>
                   </View>
-                  
+
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>Unit</Text>
                     <SegmentedButtons
@@ -1159,7 +1327,7 @@ export default function QuickAddProducts() {
                     <Text style={styles.helperText}>Select the unit of measurement</Text>
                   </View>
                 </View>
-                
+
                 <View style={styles.modalActions}>
                   <Button
                     mode="outlined"
@@ -1180,12 +1348,12 @@ export default function QuickAddProducts() {
                     Add to Inventory
                   </Button>
                 </View>
-               </ScrollView>
-             </View>
-           )}
+              </ScrollView>
+            </View>
+          )}
         </Modal>
       </Portal>
-      
+
       {/* Confirmation Modal */}
       {renderConfirmationModal()}
     </View>
@@ -1195,21 +1363,33 @@ export default function QuickAddProducts() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: THEME.card,
   },
   bottomButtonContainer: {
-    padding: 16,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    paddingTop: 0,
+    paddingBottom: 45, // Just above pagination
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    elevation: 0,
   },
   addSelectedButton: {
-    height: 48,
-    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: THEME.secondary,
+    elevation: 4,
+    shadowColor: THEME.secondary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
   addSelectedButtonLabel: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    paddingVertical: 6,
   },
   confirmationCard: {
     marginBottom: 12,
@@ -1235,12 +1415,12 @@ const styles = StyleSheet.create({
   },
   confirmationCategory: {
     fontSize: 12,
-    color: '#666',
+    color: THEME.textSecondary,
     marginBottom: 2,
   },
   confirmationPrice: {
     fontSize: 12,
-    color: '#333',
+    color: THEME.textPrimary,
   },
   header: {
     flexDirection: 'row',
@@ -1248,9 +1428,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     paddingTop: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    backgroundColor: 'transparent',
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
   },
   headerTitle: {
     flex: 1,
@@ -1268,7 +1448,7 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     elevation: 0,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: THEME.inputBackground,
     height: 40,
   },
   searchHistory: {
@@ -1281,111 +1461,137 @@ const styles = StyleSheet.create({
   },
   listContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent', // Changed to transparent to remove white background
+    paddingBottom: 80, // Reduced since pagination is absolute positioned
   },
   flatListHeader: {
     flexDirection: 'row',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: THEME.inputBackground,
     paddingVertical: 12,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: THEME.divider,
   },
   headerText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: THEME.textPrimary,
     textAlign: 'center',
   },
   flatList: {
     flex: 1,
   },
-  productItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#fff',
+  productCard: {
+    backgroundColor: THEME.card,
+    borderRadius: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
   },
-  productItemRow: {
+  productCardSelected: {
+    borderColor: THEME.secondary,
+    backgroundColor: THEME.secondary + '08',
+  },
+  cardMainRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  cardImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F5',
+  },
+  cardContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  cardName: {
+    fontSize: 15, // Slightly larger
+    fontWeight: '700',
+    color: THEME.textPrimary,
+    flex: 1,
+    marginRight: 8,
+    lineHeight: 20,
+  },
+  cardCategory: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+    marginTop: 4,
+  },
+  cardBrand: {
+    fontSize: 11,
+    color: THEME.secondary,
+    fontWeight: '700',
+    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: THEME.divider,
+  },
+  footerInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    gap: 12,
+  },
+  infoLabel: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+  },
+  infoValue: {
+    fontWeight: '700',
+    color: THEME.textPrimary,
+  },
+  actionButton: {
+    borderRadius: 20,
+    borderColor: THEME.secondary,
+    minWidth: 85,
     paddingHorizontal: 8,
-    minHeight: 45,
   },
-  imageColumn: {
-    flex: 0.12,
-    justifyContent: 'center',
-  },
-  productColumn: {
-    flex: 0.35,
-    paddingVertical: 6,
-  },
-  priceColumn: {
-    flex: 0.18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  moqColumn: {
-    flex: 0.15,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  selectColumn: {
-    flex: 0.2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  productIcon: {
-    width: 35,
-    height: 35,
-    borderRadius: 4,
-  },
-  productInfo: {
-    flexDirection: 'column',
-    justifyContent: 'center',
-  },
-  productName: {
+  actionButtonLabel: {
     fontSize: 11,
-    fontWeight: '500',
-    marginBottom: 1,
-  },
-  categoryText: {
-    fontSize: 12,
-    color: '#666',
-  },
-  brandText: {
-    fontSize: 11,
-    color: '#888',
-    fontStyle: 'italic',
-  },
-  priceText: {
-    fontSize: 12,
-    color: '#999',
-    textAlign: 'center',
-  },
-  moqText: {
-    fontSize: 12,
-    color: '#999',
-    textAlign: 'center',
+    fontWeight: '600',
+    marginHorizontal: 4,
   },
   selectButton: {
-     minWidth: 70,
-     height: 30,
-     paddingHorizontal: 0,
-     paddingVertical: 0,
-   },
-   selectButtonText: {
-     fontSize: 10,
-     fontWeight: '600',
-     paddingVertical: 0,
-     paddingHorizontal: 0,
-     marginVertical: 0,
-     marginHorizontal: 0,
-   },
-  selectedProductItem: {
-    backgroundColor: '#f0f8ff',
-    borderLeftWidth: 3,
-    borderLeftColor: '#2196F3',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: THEME.secondary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'transparent',
+    minWidth: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectButtonSelected: {
+    backgroundColor: THEME.secondary,
+    borderColor: THEME.secondary,
+  },
+  selectButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.secondary,
+  },
+  selectButtonTextSelected: {
+    color: '#FFFFFF',
   },
   loadingFooter: {
     padding: 20,
@@ -1395,26 +1601,29 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 8,
     fontSize: 14,
-    color: '#666',
+    color: THEME.textSecondary,
   },
   paginationContainer: {
+    position: 'absolute',
+    bottom: 0, // Align with bottom
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#f5f5f5',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    height: 50,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(248, 249, 250, 0.95)',
+    height: 38,
+    zIndex: 100, // Ensure it's above other elements
   },
   paginationNavButton: {
-    minWidth: 36,
-    height: 32,
+    minWidth: 32,
+    height: 28,
     borderRadius: 6,
   },
   paginationNavButtonText: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '600',
     marginVertical: 0,
     marginHorizontal: 0,
@@ -1429,60 +1638,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   pageNumberButton: {
-    minWidth: 32,
-    height: 32,
+    minWidth: 28,
+    height: 28,
     borderRadius: 6,
-    backgroundColor: '#fff',
+    backgroundColor: THEME.card,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: THEME.divider,
     justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 2,
+    marginHorizontal: 3,
   },
   pageNumberButtonActive: {
-    backgroundColor: '#2196F3',
-    borderColor: '#2196F3',
+    backgroundColor: THEME.secondary,
+    borderColor: THEME.secondary,
   },
   pageNumberText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#333',
+    color: THEME.textPrimary,
   },
   pageNumberTextActive: {
-    color: '#fff',
+    color: THEME.card,
     fontWeight: '600',
   },
   pageEllipsis: {
     fontSize: 12,
-    color: '#666',
+    color: THEME.textSecondary,
     paddingHorizontal: 4,
     alignSelf: 'center',
   },
   // Filter and Sort Styles
   filterContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: THEME.card,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: THEME.divider,
   },
   filterToggleButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: THEME.inputBackground,
   },
   filterToggleText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: THEME.textPrimary,
   },
   filterToggleIcon: {
     fontSize: 14,
-    color: '#666',
+    color: THEME.textSecondary,
   },
   filtersContent: {
     padding: 12,
-    backgroundColor: '#fff',
+    backgroundColor: THEME.card,
   },
   filterRow: {
     marginBottom: 12,
@@ -1490,61 +1699,61 @@ const styles = StyleSheet.create({
   filterLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: THEME.textPrimary,
     marginBottom: 8,
   },
   filterScrollView: {
     flexGrow: 0,
   },
   filterChip: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: THEME.inputBackground,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: THEME.divider,
   },
   filterChipSelected: {
-    backgroundColor: '#2196F3',
-    borderColor: '#2196F3',
+    backgroundColor: THEME.secondary,
+    borderColor: THEME.secondary,
   },
   filterChipText: {
     fontSize: 12,
-    color: '#666',
+    color: THEME.textSecondary,
     fontWeight: '500',
   },
   filterChipTextSelected: {
-    color: '#fff',
+    color: THEME.card,
   },
   sortContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   sortChip: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: THEME.inputBackground,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: THEME.divider,
   },
   sortChipSelected: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
+    backgroundColor: THEME.success,
+    borderColor: THEME.success,
   },
   sortChipText: {
     fontSize: 12,
-    color: '#666',
+    color: THEME.textSecondary,
     fontWeight: '500',
   },
   sortChipTextSelected: {
-    color: '#fff',
+    color: THEME.card,
   },
   clearFiltersButton: {
-    backgroundColor: '#ff5722',
+    backgroundColor: THEME.error,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
@@ -1552,7 +1761,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   clearFiltersText: {
-    color: '#fff',
+    color: THEME.card,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1580,8 +1789,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#f8f9fa',
+    borderBottomColor: THEME.divider,
+    backgroundColor: THEME.inputBackground,
   },
   modalTitleContainer: {
     flex: 1,
@@ -1589,16 +1798,16 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+    color: THEME.textPrimary,
     marginBottom: 2,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: THEME.textSecondary,
     fontWeight: '400',
   },
   closeButton: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: THEME.inputBackground,
   },
   modalScroll: {
     flex: 1,
@@ -1609,31 +1818,31 @@ const styles = StyleSheet.create({
   productHeader: {
     marginBottom: 24,
     padding: 16,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: THEME.inputBackground,
     borderRadius: 12,
     borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
+    borderLeftColor: THEME.success,
   },
   productName: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: THEME.textPrimary,
     marginBottom: 6,
   },
   productInfo: {
     fontSize: 14,
-    color: '#666',
+    color: THEME.textSecondary,
     marginBottom: 8,
   },
   productBadge: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: THEME.success,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
     alignSelf: 'flex-start',
   },
   productBadgeText: {
-    color: '#fff',
+    color: THEME.card,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1643,14 +1852,14 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: THEME.textPrimary,
     marginBottom: 8,
   },
   inputWithUnit: {
     marginBottom: 4,
   },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: THEME.card,
     fontSize: 16,
   },
   priceInput: {
@@ -1658,7 +1867,7 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontSize: 12,
-    color: '#666',
+    color: THEME.textSecondary,
     fontStyle: 'italic',
     marginTop: 4,
   },

@@ -44,9 +44,16 @@ export const googleMapsConfig = {
   apiKey: getConfigValue('GOOGLE_MAPS_API_KEY')
 };
 
+// Razorpay configuration
+export const razorpayConfig = {
+  keyId: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID', 'rzp_live_RxirgNtNjhxqSg'),
+  keySecret: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_SECRET', 'XNC1LWew0Fd4Ly9LoWb4Egrp'),
+};
+
 // Export all configurations
 export default {
   supabase: supabaseConfig,
   firebase: firebaseConfig,
-  googleMaps: googleMapsConfig
+  googleMaps: googleMapsConfig,
+  razorpay: razorpayConfig
 };

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Define gravity flags to prevent center_vertical string issues -->
+    <integer name="gravity_center_vertical">16</integer> <!-- 0x10 -->
+    <integer name="gravity_center">17</integer> <!-- 0x11 -->
+    <integer name="gravity_center_horizontal">1</integer> <!-- 0x01 -->
+    <integer name="gravity_center_combined">17</integer> <!-- 0x11 = center -->
+</resources>

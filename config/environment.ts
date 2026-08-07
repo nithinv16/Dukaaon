@@ -30,12 +30,15 @@ const config: EnvironmentConfig = {
   defaultTestOTP: '123456',
 };
 
-console.log('Environment Configuration:', {
-  environment: config.environment,
-  isProduction: config.isProduction,
-  isDevelopment: config.isDevelopment,
-  enableTestOTP: config.enableTestOTP,
-  __DEV__: typeof __DEV__ !== 'undefined' ? __DEV__ : 'undefined'
-});
+// Environment configuration is logged at debug level - suppressed in production
+if (typeof __DEV__ !== 'undefined' && __DEV__) {
+  console.log('Environment Configuration:', {
+    environment: config.environment,
+    isProduction: config.isProduction,
+    isDevelopment: config.isDevelopment,
+    enableTestOTP: config.enableTestOTP,
+    __DEV__: __DEV__
+  });
+}
 
 export default config;

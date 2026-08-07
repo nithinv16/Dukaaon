@@ -7,6 +7,7 @@ interface PaymentState {
   paymentMethods: PaymentMethod[];
   defaultMethod: PaymentMethod | null;
   loading: boolean;
+  error: string | null;
   fetchPaymentMethods: () => Promise<void>;
   addPaymentMethod: (method: Omit<PaymentMethod, 'id' | 'created_at'>) => Promise<void>;
   removePaymentMethod: (id: string) => Promise<void>;
@@ -17,6 +18,7 @@ export const usePaymentStore = create<PaymentState>((set) => ({
   paymentMethods: [],
   defaultMethod: null,
   loading: false,
+  error: null,
 
   fetchPaymentMethods: async () => {
     try {
@@ -35,14 +37,15 @@ export const usePaymentStore = create<PaymentState>((set) => ({
       const methods = data as PaymentMethod[];
       const defaultMethod = methods.find(m => m.is_default) || null;
 
-      set({ 
+      set({
         paymentMethods: methods,
         defaultMethod,
-        loading: false
+        loading: false,
+        error: null
       });
     } catch (error) {
       console.error('Error fetching payment methods:', error);
-      set({ loading: false });
+      set({ loading: false, error: error instanceof Error ? error.message : 'Failed to fetch payment methods' });
     }
   },
 
@@ -84,13 +87,14 @@ export const usePaymentStore = create<PaymentState>((set) => ({
       set(state => ({
         paymentMethods: [...state.paymentMethods, data],
         defaultMethod: method.is_default ? data : state.defaultMethod,
-        loading: false
+        loading: false,
+        error: null
       }));
-      
+
       return data;
     } catch (error) {
       console.error('Error adding payment method:', error);
-      set({ loading: false });
+      set({ loading: false, error: error instanceof Error ? error.message : 'Failed to add payment method' });
       throw error;
     }
   },
@@ -113,11 +117,12 @@ export const usePaymentStore = create<PaymentState>((set) => ({
       set(state => ({
         paymentMethods: state.paymentMethods.filter(m => m.id !== id),
         defaultMethod: state.defaultMethod?.id === id ? null : state.defaultMethod,
-        loading: false
+        loading: false,
+        error: null
       }));
     } catch (error) {
       console.error('Error removing payment method:', error);
-      set({ loading: false });
+      set({ loading: false, error: error instanceof Error ? error.message : 'Failed to remove payment method' });
       throw error;
     }
   },
@@ -154,11 +159,12 @@ export const usePaymentStore = create<PaymentState>((set) => ({
             is_default: m.id === methodOrId
           })),
           defaultMethod: state.paymentMethods.find(m => m.id === methodOrId) || null,
-          loading: false
+          loading: false,
+          error: null
         }));
       } catch (error) {
         console.error('Error setting default method:', error);
-        set({ loading: false });
+        set({ loading: false, error: error instanceof Error ? error.message : 'Failed to set default method' });
         throw error;
       }
     } else {

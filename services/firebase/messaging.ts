@@ -15,6 +15,9 @@ export interface FCMNotification {
 class FCMService {
   private isInitialized = false;
   private fcmToken: string | null = null;
+  private messageUnsubscribe?: () => void;
+  private notificationOpenedUnsubscribe?: () => void;
+  private tokenRefreshUnsubscribe?: () => void;
 
   private async waitForFirebase(): Promise<void> {
     await waitForFirebaseInitialization();
@@ -45,15 +48,19 @@ class FCMService {
         this.fcmToken = token;
         
         // Save token to storage and database
-        await this.saveFCMToken(token);
+        await AsyncStorage.setItem('fcm_token', token);
+        await this.updateTokenInDatabase(token);
       } else {
         console.log('FCM: Failed to get token');
         return false;
       }
       
+      // Clean up any existing listeners before re-registering
+      this.cleanupListeners();
+
       // Set up message handlers
       this.setupMessageHandlers();
-      
+
       // Set up token refresh handler
       this.setupTokenRefreshHandler();
       
@@ -106,15 +113,24 @@ class FCMService {
     }
   }
 
+  private cleanupListeners() {
+    this.messageUnsubscribe?.();
+    this.messageUnsubscribe = undefined;
+    this.notificationOpenedUnsubscribe?.();
+    this.notificationOpenedUnsubscribe = undefined;
+    this.tokenRefreshUnsubscribe?.();
+    this.tokenRefreshUnsubscribe = undefined;
+  }
+
   private setupMessageHandlers() {
     // Handle foreground messages
-    messaging().onMessage(async (remoteMessage) => {
+    this.messageUnsubscribe = messaging().onMessage(async (remoteMessage) => {
       console.log('FCM: Foreground message received:', remoteMessage);
       this.handleForegroundMessage(remoteMessage);
     });
 
     // Handle background/quit state messages
-    messaging().onNotificationOpenedApp((remoteMessage) => {
+    this.notificationOpenedUnsubscribe = messaging().onNotificationOpenedApp((remoteMessage) => {
       console.log('FCM: Notification opened app:', remoteMessage);
       this.handleNotificationPress(remoteMessage);
     });
@@ -137,7 +153,7 @@ class FCMService {
   }
 
   private setupTokenRefreshHandler() {
-    messaging().onTokenRefresh((token) => {
+    this.tokenRefreshUnsubscribe = messaging().onTokenRefresh((token) => {
       console.log('FCM: Token refreshed:', token);
       this.fcmToken = token;
       AsyncStorage.setItem('fcm_token', token);

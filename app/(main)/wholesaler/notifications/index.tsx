@@ -17,7 +17,7 @@ interface Notification {
 export default function WholesalerNotifications() {
   const user = useAuthStore((state) => state.user);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {

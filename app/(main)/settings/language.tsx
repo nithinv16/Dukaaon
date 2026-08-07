@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Text, Button, Searchbar, ActivityIndicator } from 'react-native-paper';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useSettingsStore } from '../../../store/settings';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { translationService } from '../../../services/translationService';
@@ -17,109 +17,155 @@ const LANGUAGES = [
   { code: 'bn', name: 'বাংলা (Bengali)' },
 ];
 
+// Original English text (never changes) - defined outside component to prevent recreation
+const ORIGINAL_TEXTS = {
+  title: 'Language Settings',
+  searchPlaceholder: 'Search languages...',
+  languageChanged: 'Language changed successfully!',
+  error: 'Error changing language',
+  loading: 'Changing language...'
+};
+
 export default function LanguageSettings() {
   const router = useRouter();
   const { setLanguage } = useSettingsStore();
-  const { currentLanguage, availableLanguages, changeLanguage, isLoading, clearTranslationCache } = useLanguage();
+  const { currentLanguage, changeLanguage, isLoading } = useLanguage();
   const [searchQuery, setSearchQuery] = useState('');
   const [isChangingLanguage, setIsChangingLanguage] = useState(false);
-  
-  // Original English text (never changes)
-  const originalTexts = {
-    title: 'Language Settings',
-    searchPlaceholder: 'Search languages...',
-    languageChanged: 'Language changed successfully!',
-    error: 'Error changing language',
-    loading: 'Changing language...'
-  };
+
+  // Track if component is mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+  // Track current language change request to cancel stale requests
+  const languageChangeIdRef = useRef(0);
 
   // Dynamic translations state
-  const [translations, setTranslations] = useState(originalTexts);
-  
-  // Load translations when language changes
+  const [translations, setTranslations] = useState(ORIGINAL_TEXTS);
+
+  // Cleanup on unmount
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Load translations when language changes - with proper cancellation
+  useEffect(() => {
+    // Skip translation loading during language change to prevent race conditions
+    if (isChangingLanguage) {
+      return;
+    }
+
+    const currentRequestId = ++languageChangeIdRef.current;
+
     const loadTranslations = async () => {
       console.log('Loading settings translations for language:', currentLanguage);
-      
+
       if (currentLanguage === 'en') {
-        setTranslations(originalTexts);
+        if (isMountedRef.current && currentRequestId === languageChangeIdRef.current) {
+          setTranslations(ORIGINAL_TEXTS);
+        }
         return;
       }
-      
+
       try {
-        const translationPromises = Object.entries(originalTexts).map(async ([key, value]) => {
-          console.log(`Translating settings "${value}" to ${currentLanguage}`);
-          const translated = await translationService.translateText(value, currentLanguage);
-          console.log(`Settings translation result: "${translated.translatedText}"`);
-          return [key, translated.translatedText];
-        });
-        
-        const translatedEntries = await Promise.all(translationPromises);
-        const newTranslations = Object.fromEntries(translatedEntries);
-        console.log('All settings translations loaded:', newTranslations);
-        setTranslations(newTranslations);
+        // Add a timeout to prevent indefinite waits
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Translation timeout')), 10000)
+        );
+
+        const translationPromise = (async () => {
+          const translationPromises = Object.entries(ORIGINAL_TEXTS).map(async ([key, value]) => {
+            const translated = await translationService.translateText(value, currentLanguage);
+            return [key, translated.translatedText];
+          });
+          return Promise.all(translationPromises);
+        })();
+
+        const translatedEntries = await Promise.race([translationPromise, timeoutPromise]) as [string, string][];
+
+        // Only update state if this is still the current request and component is mounted
+        if (isMountedRef.current && currentRequestId === languageChangeIdRef.current) {
+          const newTranslations = Object.fromEntries(translatedEntries) as typeof ORIGINAL_TEXTS;
+          console.log('All settings translations loaded:', newTranslations);
+          setTranslations(newTranslations);
+        }
       } catch (error) {
         console.error('Language settings translation error:', error);
         // Fallback to original text on error
-        setTranslations(originalTexts);
+        if (isMountedRef.current && currentRequestId === languageChangeIdRef.current) {
+          setTranslations(ORIGINAL_TEXTS);
+        }
       }
     };
 
     loadTranslations();
-  }, [currentLanguage]);
+  }, [currentLanguage, isChangingLanguage]);
 
-  const handleLanguageChange = async (selectedLanguage: string) => {
+  const handleLanguageChange = useCallback(async (selectedLanguage: string) => {
     if (selectedLanguage === currentLanguage) return;
-    
+
     setIsChangingLanguage(true);
-    
+    // Increment request ID to cancel any in-flight translation requests
+    languageChangeIdRef.current++;
+
     try {
-      // Clear translation cache before changing language
-      await clearTranslationCache();
-      
-      // Change language using context
-      const speechCode = selectedLanguage === 'en' ? 'en-US' : `${selectedLanguage}-IN`;
-      await changeLanguage(selectedLanguage, speechCode);
-      
+      // Change language using context (don't clear cache before - let new translations use cache if available)
+      await changeLanguage(selectedLanguage as any);
+
       // Update settings store
-      setLanguage(selectedLanguage);
-      
-      // Show success alert
-      Alert.alert(translations.languageChanged);
+      setLanguage(selectedLanguage as any);
+
+      if (isMountedRef.current) {
+        // Show success alert
+        Alert.alert(ORIGINAL_TEXTS.languageChanged);
+      }
     } catch (error) {
       console.error('Error changing language:', error);
-      Alert.alert(translations.error);
+      if (isMountedRef.current) {
+        Alert.alert(ORIGINAL_TEXTS.error);
+      }
     } finally {
-      setIsChangingLanguage(false);
+      if (isMountedRef.current) {
+        setIsChangingLanguage(false);
+      }
     }
-  };
+  }, [currentLanguage, changeLanguage, setLanguage]);
 
   // Filter languages based on search query
-  const filteredLanguages = LANGUAGES.filter(lang => 
+  const filteredLanguages = LANGUAGES.filter(lang =>
     lang.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
-    <View style={styles.container}>
+    <>
+      <Stack.Screen
+        options={{
+          title: 'Language Settings',
+          headerShown: true,
+          headerBackTitleVisible: false,
+        }}
+      />
+      <View style={styles.container}>
       <Text variant="headlineSmall" style={styles.title}>
         {translations.title}
       </Text>
-      
+
       <Searchbar
         placeholder={translations.searchPlaceholder}
         onChangeText={setSearchQuery}
         value={searchQuery}
         style={styles.searchbar}
         iconColor="#FF7D00"
-        disabled={isChangingLanguage}
+        editable={!isChangingLanguage}
       />
-      
+
       <View style={styles.languages}>
         {filteredLanguages.map((lang) => (
           <TouchableOpacity
             key={lang.code}
             style={[
-              styles.languageButton, 
+              styles.languageButton,
               currentLanguage === lang.code && styles.activeLanguage
             ]}
             onPress={() => handleLanguageChange(lang.code)}
@@ -134,7 +180,7 @@ export default function LanguageSettings() {
           </TouchableOpacity>
         ))}
       </View>
-      
+
       {isChangingLanguage && (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF7D00" />
@@ -142,6 +188,7 @@ export default function LanguageSettings() {
         </View>
       )}
     </View>
+    </>
   );
 }
 

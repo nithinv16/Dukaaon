@@ -46,14 +46,14 @@ class ProductSearchService {
    * Enhanced product search with multilingual support
    */
   static async searchProducts(options: VoiceSearchOptions & { userLanguage?: string; translatedQuery?: string }): Promise<SearchResult> {
-    const { query, language = 'en-US', intent = 'search', limit = 50, includeOutOfStock = true, userLatitude, userLongitude, radiusKm = 20, userLanguage = 'en', translatedQuery } = options;
-    
+    const { query, language = 'en-US', intent = 'search', limit = 50, includeOutOfStock = true, userLatitude, userLongitude, radiusKm = 50, userLanguage = 'en', translatedQuery } = options;
+
     try {
       // Clean and process both original and translated queries
       const processedQuery = this.processVoiceQuery(query, language);
       const processedTranslatedQuery = translatedQuery ? this.processVoiceQuery(translatedQuery, 'en-US') : null;
       console.log('Processed search queries:', { original: processedQuery, translated: processedTranslatedQuery });
-      
+
       // Get nearby wholesalers and manufacturers if location is provided
       let nearbySellerIds: string[] = [];
       if (userLatitude && userLongitude) {
@@ -119,10 +119,15 @@ class ProductSearchService {
             manufacturerIds = nearbyManufacturers.map((m: any) => m.user_id);
             console.log(`RPC manufacturers within ${radiusKm}km: ${manufacturerIds.length}`);
           }
-          
+
           // Combine and de-duplicate
           nearbySellerIds = [...new Set([...wholesalerIds, ...manufacturerIds])];
           console.log(`Total nearby sellers (combined): ${nearbySellerIds.length}`);
+
+          // If no sellers found nearby, don't filter by seller (search all)
+          if (nearbySellerIds.length === 0) {
+            console.log(`No sellers within ${radiusKm}km, will search all products without seller filter`);
+          }
         } catch (error) {
           console.error('Error fetching nearby sellers:', error);
           // Continue with search even if location-based filtering fails
@@ -147,11 +152,11 @@ class ProductSearchService {
           stock_available,
           min_quantity
         `);
-      
+
       // Apply search filters with enhanced product name matching
       if (processedQuery.searchTerms.length > 0 || processedQuery.productNames.length > 0) {
         let hasSearchConditions = false;
-        
+
         // Strategy 1: Prioritize detected product names (highest priority)
         if (processedQuery.productNames.length > 0) {
           const productNameConditions = [];
@@ -164,7 +169,7 @@ class ProductSearchService {
             hasSearchConditions = true;
           }
         }
-        
+
         // Strategy 2: Search each term individually across all fields
         if (processedQuery.searchTerms.length > 0) {
           const termConditions = [];
@@ -175,12 +180,12 @@ class ProductSearchService {
             termConditions.push(`brand.ilike.%${term}%`);
             termConditions.push(`description.ilike.%${term}%`);
           }
-          
+
           // Strategy 3: Search combined terms for exact product names
           const combinedTerm = processedQuery.searchTerms.join(' ');
           termConditions.push(`name.ilike.%${combinedTerm}%`);
           termConditions.push(`description.ilike.%${combinedTerm}%`);
-          
+
           // Strategy 4: Search for partial matches with different combinations
           if (processedQuery.searchTerms.length > 1) {
             for (let i = 0; i < processedQuery.searchTerms.length - 1; i++) {
@@ -188,26 +193,43 @@ class ProductSearchService {
               termConditions.push(`name.ilike.%${partialTerm}%`);
             }
           }
-          
-          // Strategy 5: Fuzzy matching for common misspellings
+
+          // Strategy 5: Fuzzy matching for common misspellings and brand variations
           const fuzzyTerms = processedQuery.searchTerms.map(term => {
             // Handle common misspellings and variations
-            const variations = {
-              'atta': ['ata', 'wheat flour', 'flour'],
+            const variations: { [key: string]: string[] } = {
+              'atta': ['ata', 'wheat flour', 'flour', 'gehun'],
               'haldi': ['turmeric', 'haladi'],
               'doodh': ['milk', 'dudh'],
               'chawal': ['rice', 'chaawal'],
-              'namak': ['salt', 'namk']
+              'namak': ['salt', 'namk'],
+              // Brand variations
+              'parle': ['parle-g', 'parleg', 'parle g'],
+              'britannia': ['britania', 'britannia'],
+              'nestle': ['nestlé', 'nestle'],
+              'maggi': ['maggie', 'magi'],
+              // Product type variations
+              'biscuit': ['biscuits', 'cookies', 'cookie'],
+              'biscuits': ['biscuit', 'cookies', 'cookie']
             };
-            
-            const termVariations = variations[term] || [];
+
+            const termVariations = variations[term.toLowerCase()] || [];
             return [term, ...termVariations];
           }).flat();
-          
+
+          // Also try hyphenated combinations of adjacent terms
+          if (processedQuery.searchTerms.length >= 2) {
+            for (let i = 0; i < processedQuery.searchTerms.length - 1; i++) {
+              const hyphenated = `${processedQuery.searchTerms[i]}-${processedQuery.searchTerms[i + 1]}`;
+              fuzzyTerms.push(hyphenated);
+            }
+          }
+
           for (const fuzzyTerm of fuzzyTerms) {
             termConditions.push(`name.ilike.%${fuzzyTerm}%`);
+            termConditions.push(`brand.ilike.%${fuzzyTerm}%`);
           }
-          
+
           // Apply search conditions
           if (termConditions.length > 0) {
             if (hasSearchConditions) {
@@ -219,17 +241,17 @@ class ProductSearchService {
           }
         }
       }
-      
+
       // Filter by specific categories if detected
       if (processedQuery.category) {
         searchQuery = searchQuery.eq('category', processedQuery.category);
       }
-      
+
       // Filter by brand if detected
       if (processedQuery.brand) {
         searchQuery = searchQuery.eq('brand', processedQuery.brand);
       }
-      
+
       // Filter by nearby sellers (wholesalers + manufacturers) if location is provided
       if (nearbySellerIds.length > 0) {
         searchQuery = searchQuery.in('seller_id', nearbySellerIds);
@@ -239,20 +261,20 @@ class ProductSearchService {
       if (!includeOutOfStock) {
         searchQuery = searchQuery.gt('stock_available', 0);
       }
-      
+
       // Apply limit and execute query
       console.log('Executing search query with filters applied');
       const { data: products, error, count } = await searchQuery
         .limit(limit)
         .order('name');
-      
+
       console.log('Product search results:', { products, error, count });
-      
+
       if (error) {
         console.error('Product search error:', error);
         throw error;
       }
-      
+
       if (!products || products.length === 0) {
         console.log('No products found, trying simpler search...');
         // Fallback to simpler search if no results
@@ -271,7 +293,7 @@ class ProductSearchService {
             stock_available,
             min_quantity
           `);
-        
+
         // Simple text search across name and description
         if (processedQuery.searchTerms.length > 0) {
           const simpleConditions = [];
@@ -281,16 +303,16 @@ class ProductSearchService {
           }
           fallbackQuery.or(simpleConditions.join(','));
         }
-        
+
         // Filter by nearby sellers if available
         if (nearbySellerIds.length > 0) {
           fallbackQuery.in('seller_id', nearbySellerIds);
         }
-        
+
         const { data: fallbackProducts, error: fallbackError } = await fallbackQuery
           .limit(limit)
           .order('name');
-        
+
         if (!fallbackError && fallbackProducts) {
           console.log('Fallback search found:', fallbackProducts.length, 'products');
           return {
@@ -301,18 +323,18 @@ class ProductSearchService {
           };
         }
       }
-      
+
       // Extract unique categories and brands from results
       const categories = [...new Set(products?.map(p => p.category).filter(Boolean))] as string[];
       const brands = [...new Set(products?.map(p => p.brand).filter(Boolean))] as string[];
-      
+
       return {
         products: products || [],
         categories,
         brands,
         totalCount: count || products?.length || 0
       };
-      
+
     } catch (error) {
       console.error('Error in product search:', error);
       return {
@@ -329,7 +351,7 @@ class ProductSearchService {
    */
   private static processVoiceQuery(query: string, language: string) {
     const lowerQuery = query.toLowerCase().trim();
-    
+
     // Remove common voice command words
     const stopWords = {
       'en-US': ['i', 'want', 'need', 'search', 'for', 'find', 'show', 'me', 'get', 'buy', 'order', 'a', 'an', 'the', 'some'],
@@ -338,14 +360,29 @@ class ProductSearchService {
       'ta-IN': ['எனக்கு', 'வேண்டும்', 'காட்டு', 'கொண்டு', 'ஆர்டர்'],
       'kn-IN': ['ನನಗೆ', 'ಬೇಕು', 'ತೋರಿಸು', 'ತಂದು', 'ಆರ್ಡರ್']
     };
-    
+
     const currentStopWords = stopWords[language as keyof typeof stopWords] || stopWords['en-US'];
-    
+
     // Split query into words and remove stop words
-    const words = lowerQuery.split(/\s+/).filter(word => 
-      word.length > 1 && !currentStopWords.includes(word)
-    );
-    
+    // Keep single-letter words if they appear to be part of a brand name (like 'g' in 'parle g')
+    const allWords = lowerQuery.split(/\s+/);
+    const words = allWords.filter((word, index) => {
+      // Skip empty words
+      if (word.length === 0) return false;
+      // Skip stop words
+      if (currentStopWords.includes(word)) return false;
+      // Keep single letters if preceded by a known brand or product word
+      if (word.length === 1) {
+        const prevWord = allWords[index - 1];
+        const knownBrands = ['parle', 'marie', 'good', 'top'];
+        if (prevWord && knownBrands.some(b => prevWord.includes(b))) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    });
+
     // Enhanced product and category keywords
     const productKeywords = {
       // Groceries and Food Items
@@ -383,11 +420,11 @@ class ProductSearchService {
         'marker', 'highlighter', 'stapler', 'scissors', 'glue'
       ]
     };
-    
+
     // Detect category based on product keywords
     let detectedCategory = null;
     let categoryScore = 0;
-    
+
     for (const [category, keywords] of Object.entries(productKeywords)) {
       const matches = keywords.filter(keyword => lowerQuery.includes(keyword)).length;
       if (matches > categoryScore) {
@@ -395,7 +432,7 @@ class ProductSearchService {
         detectedCategory = category;
       }
     }
-    
+
     // Detect common brand names (expanded list)
     const commonBrands = [
       'tata', 'amul', 'britannia', 'parle', 'nestle', 'unilever', 'colgate', 'dabur', 'patanjali',
@@ -404,12 +441,12 @@ class ProductSearchService {
       'mother dairy', 'nandini', 'heritage', 'aavin'
     ];
     const detectedBrand = commonBrands.find(brand => lowerQuery.includes(brand));
-    
+
     // Enhanced product name detection
     const productNames = [];
-    
+
     // Check for common product combinations
-    const productCombinations = {
+    const productCombinations: { [key: string]: string[] } = {
       'wheat flour': ['atta', 'wheat flour', 'gehun ka atta'],
       'turmeric powder': ['turmeric', 'haldi', 'turmeric powder'],
       'milk': ['milk', 'doodh', 'fresh milk', 'toned milk'],
@@ -417,15 +454,23 @@ class ProductSearchService {
       'basmati rice': ['basmati', 'rice', 'basmati rice'],
       'tea': ['tea', 'chai', 'black tea', 'green tea'],
       'sugar': ['sugar', 'cheeni', 'white sugar'],
-      'salt': ['salt', 'namak', 'iodized salt']
+      'salt': ['salt', 'namak', 'iodized salt'],
+      // Branded products
+      'parle g': ['parle g', 'parle-g', 'parleg', 'parle g biscuit'],
+      'parle-g': ['parle g', 'parle-g', 'parleg'],
+      'good day': ['good day', 'goodday', 'britannia good day'],
+      'marie gold': ['marie gold', 'marie', 'mariegold'],
+      'maggi': ['maggi', 'maggie', 'maggi noodles'],
+      'amul butter': ['amul butter', 'amul', 'butter amul'],
+      'tata salt': ['tata salt', 'tata namak']
     };
-    
+
     for (const [productName, variations] of Object.entries(productCombinations)) {
       if (variations.some(variation => lowerQuery.includes(variation))) {
         productNames.push(productName);
       }
     }
-    
+
     return {
       searchTerms: words,
       category: detectedCategory,
@@ -435,7 +480,7 @@ class ProductSearchService {
       categoryScore: categoryScore
     };
   }
-  
+
   /**
    * Get product suggestions based on partial input
    */
@@ -446,30 +491,30 @@ class ProductSearchService {
         .select('name')
         .ilike('name', `%${query}%`)
         .limit(limit);
-      
+
       if (error) {
         console.error('Error fetching product suggestions:', error);
         return [];
       }
-      
+
       return products?.map(p => p.name) || [];
     } catch (error) {
       console.error('Error in getProductSuggestions:', error);
       return [];
     }
   }
-  
+
   /**
    * Apply multilingual text search to products
    */
   private static applyMultilingualTextSearch(
-    products: any[], 
-    originalQuery: ProcessedQuery | null, 
+    products: any[],
+    originalQuery: ProcessedQuery | null,
     translatedQuery: ProcessedQuery | null,
     userLanguage: string
   ): any[] {
-    if ((!originalQuery || !originalQuery.searchTerms.length) && 
-        (!translatedQuery || !translatedQuery.searchTerms.length)) {
+    if ((!originalQuery || !originalQuery.searchTerms.length) &&
+      (!translatedQuery || !translatedQuery.searchTerms.length)) {
       return products;
     }
 
@@ -509,28 +554,28 @@ class ProductSearchService {
    * Search with a specific query and apply relevance scoring
    */
   private static searchWithQuery(
-    product: any, 
-    searchableText: string, 
-    processedQuery: ProcessedQuery, 
+    product: any,
+    searchableText: string,
+    processedQuery: ProcessedQuery,
     scoreMultiplier: number = 1.0
   ): boolean {
     let hasMatch = false;
 
     // Strategy 1: Prioritize products where name contains search terms
-    const nameMatches = processedQuery.searchTerms.some(term => 
+    const nameMatches = processedQuery.searchTerms.some(term =>
       product.name?.toLowerCase().includes(term.toLowerCase())
     );
-    
+
     if (nameMatches) {
       product._relevanceScore = (product._relevanceScore || 0) + (10 * scoreMultiplier);
       hasMatch = true;
     }
 
     // Strategy 2: Search for individual terms
-    const individualMatches = processedQuery.searchTerms.some(term => 
+    const individualMatches = processedQuery.searchTerms.some(term =>
       searchableText.includes(term.toLowerCase())
     );
-    
+
     if (individualMatches) {
       product._relevanceScore = (product._relevanceScore || 0) + (5 * scoreMultiplier);
       hasMatch = true;
@@ -545,11 +590,11 @@ class ProductSearchService {
 
     // Strategy 4: Partial matches
     const partialMatches = processedQuery.searchTerms.some(term => {
-      return searchableText.split(' ').some(word => 
+      return searchableText.split(' ').some(word =>
         word.startsWith(term.toLowerCase()) || term.toLowerCase().startsWith(word)
       );
     });
-    
+
     if (partialMatches) {
       product._relevanceScore = (product._relevanceScore || 0) + (3 * scoreMultiplier);
       hasMatch = true;
@@ -559,7 +604,7 @@ class ProductSearchService {
     const fuzzyMatches = processedQuery.searchTerms.some(term => {
       return this.fuzzyMatch(term.toLowerCase(), searchableText);
     });
-    
+
     if (fuzzyMatches) {
       product._relevanceScore = (product._relevanceScore || 0) + (2 * scoreMultiplier);
       hasMatch = true;
@@ -579,50 +624,50 @@ class ProductSearchService {
    * Sort products by multilingual relevance score
    */
   private static sortByMultilingualRelevance(
-    products: any[], 
-    originalQuery: ProcessedQuery | null, 
+    products: any[],
+    originalQuery: ProcessedQuery | null,
     translatedQuery: ProcessedQuery | null,
     userLanguage: string
   ): any[] {
     return products.sort((a, b) => {
       const scoreA = a._relevanceScore || 0;
       const scoreB = b._relevanceScore || 0;
-      
+
       if (scoreA !== scoreB) {
         return scoreB - scoreA; // Higher score first
       }
-      
+
       // Secondary sort by name similarity (prioritize user's language)
       const nameA = a.name?.toLowerCase() || '';
       const nameB = b.name?.toLowerCase() || '';
-      
+
       let maxSimilarityA = 0;
       let maxSimilarityB = 0;
-      
+
       // Calculate similarity with original query
       if (originalQuery && originalQuery.searchTerms.length > 0) {
         const originalQueryTerms = originalQuery.searchTerms.join(' ').toLowerCase();
         const similarityA = this.calculateStringSimilarity(nameA, originalQueryTerms);
         const similarityB = this.calculateStringSimilarity(nameB, originalQueryTerms);
-        
+
         maxSimilarityA = Math.max(maxSimilarityA, similarityA * (userLanguage === 'en' ? 1.0 : 1.2));
         maxSimilarityB = Math.max(maxSimilarityB, similarityB * (userLanguage === 'en' ? 1.0 : 1.2));
       }
-      
+
       // Calculate similarity with translated query
       if (translatedQuery && translatedQuery.searchTerms.length > 0) {
         const translatedQueryTerms = translatedQuery.searchTerms.join(' ').toLowerCase();
         const similarityA = this.calculateStringSimilarity(nameA, translatedQueryTerms);
         const similarityB = this.calculateStringSimilarity(nameB, translatedQueryTerms);
-        
+
         maxSimilarityA = Math.max(maxSimilarityA, similarityA * (userLanguage === 'en' ? 1.2 : 1.0));
         maxSimilarityB = Math.max(maxSimilarityB, similarityB * (userLanguage === 'en' ? 1.2 : 1.0));
       }
-      
+
       if (maxSimilarityA !== maxSimilarityB) {
         return maxSimilarityB - maxSimilarityA;
       }
-      
+
       // Tertiary sort by creation date (newer first)
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
@@ -641,15 +686,15 @@ class ProductSearchService {
   private static calculateStringSimilarity(str1: string, str2: string): number {
     const len1 = str1.length;
     const len2 = str2.length;
-    
+
     if (len1 === 0) return len2 === 0 ? 1 : 0;
     if (len2 === 0) return 0;
-    
+
     const matrix = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(null));
-    
+
     for (let i = 0; i <= len1; i++) matrix[i][0] = i;
     for (let j = 0; j <= len2; j++) matrix[0][j] = j;
-    
+
     for (let i = 1; i <= len1; i++) {
       for (let j = 1; j <= len2; j++) {
         const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
@@ -660,7 +705,7 @@ class ProductSearchService {
         );
       }
     }
-    
+
     const maxLen = Math.max(len1, len2);
     return (maxLen - matrix[len1][len2]) / maxLen;
   }
@@ -680,17 +725,17 @@ class ProductSearchService {
       'jeera': ['cumin', 'jira'],
       'dhania': ['coriander', 'cilantro']
     };
-    
+
     // Check if term has variations
     const termVariations = variations[term] || [];
-    
+
     // Check direct match
     if (text.includes(term)) return true;
-    
+
     // Check variations
     return termVariations.some(variation => text.includes(variation));
   }
-  
+
   /**
    * Find exact product match for ordering
    */
@@ -702,9 +747,9 @@ class ProductSearchService {
         .select('*')
         .ilike('name', productName)
         .limit(1);
-      
+
       if (error) throw error;
-      
+
       // If no exact match, try partial match
       if (!products || products.length === 0) {
         ({ data: products, error } = await supabase
@@ -712,17 +757,17 @@ class ProductSearchService {
           .select('*')
           .ilike('name', `%${productName}%`)
           .limit(1));
-        
+
         if (error) throw error;
       }
-      
+
       return products && products.length > 0 ? products[0] : null;
     } catch (error) {
       console.error('Error finding product for order:', error);
       return null;
     }
   }
-  
+
   /**
    * Add product to cart (for voice ordering)
    */
@@ -738,9 +783,9 @@ class ProductSearchService {
         }, {
           onConflict: 'user_id,product_id'
         });
-      
+
       if (error) throw error;
-      
+
       return true;
     } catch (error) {
       console.error('Error adding to cart via voice:', error);
@@ -755,8 +800,8 @@ class ProductSearchService {
     const dLat = toRad(lat2 - lat1);
     const dLon = toRad(lon2 - lon1);
     const a = Math.sin(dLat / 2) ** 2 +
-              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-              Math.sin(dLon / 2) ** 2;
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(a));
   }
 }

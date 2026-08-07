@@ -1,32 +1,56 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, Image, Pressable, Dimensions, ScrollView } from 'react-native';
+import { View, StyleSheet, FlatList, Image, Pressable, Dimensions, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, Searchbar, Card, Avatar, ActivityIndicator, IconButton, Chip, Button, Snackbar } from 'react-native-paper';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase/supabase';
 import { PRODUCT_CATEGORIES } from '../../../constants/categories';
 import ProductImage from '../../../components/common/ProductImage';
 import CartIcon from '../../../components/CartIcon';
 import { useCartStore } from '../../../store/cart';
-
 import { useLocationStore } from '../../../store/location';
 import ProductSearchService from '../../../services/productSearchService';
 import { useAuthStore } from '../../../store/auth';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { useTranslateDynamic } from '../../../utils/translationUtils';
 import CartDistanceManager from '../../../components/CartDistanceManager';
+import { translationService, SupportedLanguage } from '../../../services/translationService';
+import { useLanguageStore } from '../../../store/language';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SystemStatusBar } from '../../../components/SystemStatusBar';
+
+// Premium Theme Colors
+const COLORS = {
+  primary: '#FF7D00',
+  primaryLight: '#FFA64D',
+  primaryDark: '#E56700',
+  secondary: '#1E2A3A',
+  white: '#FFFFFF',
+  offWhite: '#F8F9FA',
+  lightGrey: '#F0F2F5',
+  grey: '#8E8E93',
+  darkGrey: '#4A4A4A',
+  success: '#34C759',
+  danger: '#FF3B30',
+  warning: '#FF9500',
+  info: '#007AFF',
+  cardBg: '#FFFFFF',
+  shadow: '#000000',
+  overlay: 'rgba(0,0,0,0.05)',
+};
 
 // Safe router hook with validation
 const useSafeRouter = () => {
   let router;
-  
+
   try {
     router = useRouter();
   } catch (error) {
     console.error('[Search] Error initializing router:', error);
     router = null;
   }
-  
-  // Create safe router wrapper
+
   const safeRouter = {
     push: (path: string) => {
       if (router && typeof router.push === 'function') {
@@ -56,13 +80,12 @@ const useSafeRouter = () => {
       return false;
     }
   };
-  
+
   return safeRouter;
 };
 
-
 const { width } = Dimensions.get('window');
-const productCardWidth = (width - 72) / 2; // Two cards per row with more spacing for smaller cards
+const productCardWidth = (width - 48) / 2;
 
 interface SearchResult {
   type: 'product' | 'seller' | 'manufacturer' | 'category';
@@ -80,46 +103,60 @@ interface SearchResult {
 }
 
 export default function Search() {
+  const insets = useSafeAreaInsets();
   const router = useSafeRouter();
-  const { query, results: initialResults, language, intent, autoOrder, quantity: voiceQuantity, source } = useLocalSearchParams();
-  const { translateArrayFields } = useTranslateDynamic();
-  
-  // Direct text strings instead of translations
-  const getTranslatedText = (text: string) => {
-    const texts: Record<string, string> = {
-      'Search Results': 'Search Results',
-      'results': 'results',
-      'Search wholesalers, products...': 'Search wholesalers, products...',
-      'Sort by': 'Sort by',
-      'Relevance': 'Relevance',
-      'Name': 'Name',
-      'No results found for': 'No results found for',
-      'Products': 'Products',
-      'Wholesalers': 'Wholesalers',
-      'Manufacturers': 'Manufacturers',
-      'Categories': 'Categories',
-      'Product Name': 'Product Name',
-      'No description available': 'No description available',
-      'Seller': 'Seller',
-      'Min Order': 'Min Order',
-      'In stock': 'In stock',
-      'Out of stock': 'Out of stock',
-      'Wholesaler': 'Wholesaler',
-      'Manufacturer': 'Manufacturer',
-      'Add to Cart': 'Add to Cart',
-      'Added': 'Added',
-      'Remove': 'Remove',
-      'Low stock': 'Low stock',
-      'Available': 'Available',
-      'Stock': 'Stock',
-      'Min': 'Min',
-      'Price': 'Price',
-      '📷 OCR Order': '📷 OCR Order',
-      '📷 Scan Search': '📷 Scan Search'
-    };
-    return texts[text] || text;
+  const { query, results: initialResults, language, intent, autoOrder, quantity: voiceQuantity, source } = useLocalSearchParams() as {
+    query?: string;
+    results?: string;
+    language?: string;
+    intent?: string;
+    autoOrder?: string;
+    quantity?: string;
+    source?: string;
   };
-  
+  const { translateArrayFields } = useTranslateDynamic();
+
+  // Original texts object for useInstantTranslation
+  const originalTexts = {
+    searchResults: 'Search Results',
+    results: 'results',
+    searchPlaceholder: 'Search wholesalers, products...',
+    sortBy: 'Sort by',
+    relevance: 'Relevance',
+    name: 'Name',
+    noResultsFor: 'No results found for',
+    products: 'Products',
+    wholesalers: 'Wholesalers',
+    manufacturers: 'Manufacturers',
+    categories: 'Categories',
+    productName: 'Product Name',
+    noDescription: 'No description available',
+    seller: 'Seller',
+    minOrder: 'Min Order',
+    inStock: 'In stock',
+    outOfStock: 'Out of stock',
+    wholesaler: 'Wholesaler',
+    manufacturer: 'Manufacturer',
+    addToCart: 'Add to Cart',
+    added: 'Added',
+    remove: 'Remove',
+    lowStock: 'Low stock',
+    available: 'Available',
+    stock: 'Stock',
+    min: 'Min',
+    price: 'Price',
+    ocrOrder: 'OCR Order',
+    scanSearch: 'Scan Search',
+    trySearchingFor: 'Try searching for',
+    searching: 'Searching...',
+  };
+
+  // Use translation hook for UI texts
+  const [translations, setTranslations] = useState(originalTexts);
+
+  // Translation function
+  const t = (key: keyof typeof originalTexts) => translations[key] || originalTexts[key];
+
   const [searchQuery, setSearchQuery] = useState(query as string);
   const [results, setResults] = useState<SearchResult[]>(() => {
     if (initialResults) {
@@ -136,6 +173,7 @@ export default function Search() {
   const { addToCart } = useCartStore();
   const { user } = useAuthStore();
   const { userLocation } = useLocationStore();
+  const currentLanguage = useLanguageStore(state => state.language);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [addedToCartIds, setAddedToCartIds] = useState<Record<string, boolean>>({});
@@ -146,44 +184,50 @@ export default function Search() {
   const [showDistanceManager, setShowDistanceManager] = useState(false);
   const [distanceError, setDistanceError] = useState('');
 
+  // Load translations when language changes
+  useEffect(() => {
+    const loadTranslations = async () => {
+      if (currentLanguage === 'en') {
+        setTranslations(originalTexts);
+        return;
+      }
 
+      try {
+        const translationPromises = Object.entries(originalTexts).map(async ([key, value]) => {
+          const translated = await translationService.translateText(value, currentLanguage as SupportedLanguage);
+          return [key, translated.translatedText];
+        });
 
+        const translatedEntries = await Promise.all(translationPromises);
+        setTranslations(Object.fromEntries(translatedEntries) as typeof originalTexts);
+      } catch (error) {
+        console.error('[Search] Error loading translations:', error);
+      }
+    };
 
-
+    loadTranslations();
+  }, [currentLanguage]);
 
   // Remove product from search results
   const removeProduct = (productId: string) => {
     setResults(prev => prev.filter(item => item.id !== productId));
   };
 
-  // Filter and sort results based on user preferences
+  // Filter and sort results
   const getFilteredAndSortedResults = () => {
     let filteredResults = [...results];
-
-    // Apply sorting
     filteredResults.sort((a, b) => {
       switch (sortOption) {
         case 'name':
           return a.name.localeCompare(b.name);
-        case 'price':
-          const priceA = parseFloat(a.price || '0');
-          const priceB = parseFloat(b.price || '0');
-          return priceA - priceB;
         case 'relevance':
         default:
-          // Default sorting: products first
           if (a.type === 'product' && b.type !== 'product') return -1;
           if (a.type !== 'product' && b.type === 'product') return 1;
           return 0;
       }
     });
-
     return filteredResults;
-  };
-
-  // Reset filters
-  const resetFilters = () => {
-    setSortOption('relevance');
   };
 
   useEffect(() => {
@@ -191,31 +235,18 @@ export default function Search() {
       performSearch(searchQuery);
     }
   }, []);
-  
-  // Handle voice search with auto-order on mount
+
   useEffect(() => {
     if (isVoiceSearch && autoOrderMode && searchQuery && !initialResults) {
-      console.log('Voice search with auto-order detected, performing enhanced search...');
       performSearch(searchQuery);
     }
   }, [isVoiceSearch, autoOrderMode, searchQuery]);
 
-  // Handle OCR search on mount
   useEffect(() => {
     if (source === 'ocr' && searchQuery && !initialResults) {
-      console.log('OCR search detected, performing search for:', searchQuery);
       performSearch(searchQuery);
     }
   }, [source, searchQuery]);
-
-  // Force re-render when sort option changes
-  const [filterKey, setFilterKey] = useState(0);
-  useEffect(() => {
-    console.log('Filter changed - sortOption:', sortOption);
-    setFilterKey(prev => prev + 1); // Force re-render
-  }, [sortOption]);
-  
-
 
   const handleQuantityChange = (productId: string, increment: boolean, minQuantity: number = 1) => {
     setQuantities(prev => {
@@ -230,9 +261,9 @@ export default function Search() {
   const handleAddToCart = async (product: SearchResult) => {
     try {
       if (product.type !== 'product') return;
-      
+
       const quantity = quantities[product.id] || product.min_quantity || 1;
-      
+
       await addToCart({
         uniqueId: `${product.id}-${Date.now()}`,
         product_id: product.id,
@@ -243,24 +274,20 @@ export default function Search() {
         unit: product.unit || 'piece',
         seller_id: product.seller_id || ''
       });
-      
-      // Reset quantity after adding to cart
+
       setQuantities(prev => ({
         ...prev,
         [product.id]: product.min_quantity || 1
       }));
 
-      // Show visual feedback
       setAddedToCartIds(prev => ({
         ...prev,
         [product.id]: true
       }));
-      
-      // Show snackbar message
+
       setSnackbarMessage(`Added ${product.name} to cart`);
       setSnackbarVisible(true);
-      
-      // Reset the checkmark after 2 seconds
+
       setTimeout(() => {
         setAddedToCartIds(prev => ({
           ...prev,
@@ -269,20 +296,14 @@ export default function Search() {
       }, 2000);
     } catch (error: any) {
       console.error('Error adding to cart:', error);
-      
-      // Check if it's a distance validation error
+
       if (error.message && error.message.includes('Distance to')) {
-        // Show distance constraint manager
         setDistanceError(error.message);
         setShowDistanceManager(true);
       } else {
         setSnackbarMessage("Failed to add item to cart. Please try again.");
         setSnackbarVisible(true);
-        
-        // Hide snackbar after 4 seconds for error messages
-        setTimeout(() => {
-          setSnackbarVisible(false);
-        }, 4000);
+        setTimeout(() => setSnackbarVisible(false), 4000);
       }
     }
   };
@@ -290,54 +311,55 @@ export default function Search() {
   const performSearch = async (query: string) => {
     if (!query) return;
     setLoading(true);
-    console.log('Performing enhanced search for:', query, { language, intent, autoOrderMode });
 
     try {
       const { distanceFilter } = useLocationStore.getState();
       const isLocationFiltered = userLocation && distanceFilter;
-      
-      if (isLocationFiltered) {
-        console.log(`Searching with location filter: ${distanceFilter}km radius from user location`);
-      } else {
-        console.log('Searching without location filter (no user location or distance filter)');
+
+      // Step 1: Translate query to English if user is searching in another language
+      let searchQueryInEnglish = query;
+      if (currentLanguage !== 'en') {
+        try {
+          console.log(`[Search] Translating query from ${currentLanguage} to English:`, query);
+          const translationResult = await translationService.translateText(query, 'en' as SupportedLanguage);
+          searchQueryInEnglish = translationResult.translatedText || query;
+          console.log('[Search] Translated query:', searchQueryInEnglish);
+        } catch (error) {
+          console.error('[Search] Error translating query:', error);
+          // Continue with original query if translation fails
+        }
       }
-      
-      // Use the new ProductSearchService for better results with location-based filtering
+
+      // Step 2: Perform search with both original and translated query
       const searchResults = await ProductSearchService.searchProducts({
-        query,
+        query: searchQueryInEnglish, // Use English query for database search
         language: language as string || 'en-US',
         intent: (intent as 'search' | 'order' | 'navigate') || 'search',
         limit: 50,
-        includeOutOfStock: !autoOrderMode, // Exclude out of stock for orders
+        includeOutOfStock: !autoOrderMode,
         userLatitude: userLocation?.latitude,
         userLongitude: userLocation?.longitude,
-        radiusKm: isLocationFiltered ? distanceFilter : undefined
-      }, language as string || 'en-US');
-      
-      console.log('Enhanced search results:', searchResults);
-      
+        radiusKm: isLocationFiltered ? distanceFilter : undefined,
+        userLanguage: currentLanguage,
+        translatedQuery: currentLanguage !== 'en' ? query : undefined // Pass original query for multilingual matching
+      });
+
       const results: SearchResult[] = [];
-      
-      // Get seller details for products
+
       const productIds = searchResults.products.map(p => p.id);
       let sellerDetails: Record<string, any> = {};
 
       if (productIds.length > 0) {
         try {
           const sellerIds = searchResults.products.map(p => p.seller_id).filter(Boolean);
-          console.log('Fetching seller details for seller IDs:', sellerIds);
-          
           const { data: sellers, error: sellerError } = await supabase
             .from('seller_details')
             .select('user_id, business_name, latitude, longitude')
             .in('user_id', sellerIds);
 
-          console.log('Seller details query result:', { sellers, sellerError });
-
           if (!sellerError && sellers) {
             sellers.forEach(seller => {
               sellerDetails[seller.user_id] = seller;
-              console.log(`Seller ${seller.user_id} (${seller.business_name})`);
             });
           }
         } catch (error) {
@@ -345,18 +367,8 @@ export default function Search() {
         }
       }
 
-
-
-      // Convert products to SearchResult format with seller info and distance filtering
       searchResults.products.forEach(product => {
         const seller = sellerDetails[product.seller_id || ''];
-        
-        console.log(`Processing product ${product.name}:`);
-        console.log(`  - Seller ID: ${product.seller_id}`);
-        console.log(`  - Seller found: ${!!seller}`);
-        
-
-        
         results.push({
           type: 'product',
           id: product.id,
@@ -366,18 +378,13 @@ export default function Search() {
           price: product.price?.toString() || '0',
           unit: 'piece',
           seller_id: product.seller_id,
-          min_quantity: product.min_quantity || 1,
+          min_quantity: (product as any).min_quantity || 1,
           seller_name: seller?.business_name || 'Unknown Seller',
           stock_available: product.stock_available
         });
       });
-      
-      // Products are already sorted by relevance from the search service
-      console.log('Products sorted by relevance');
-      
-      // Add category results if no specific products found or for general search
+
       if (results.length < 5 || intent !== 'order') {
-        console.log('Adding category results...');
         for (const category of PRODUCT_CATEGORIES) {
           if (category.name.toLowerCase().includes(query.toLowerCase())) {
             results.push({
@@ -388,8 +395,7 @@ export default function Search() {
               path: `/(main)/screens/category/${category.id}`
             });
           }
-          
-          // Also search in subcategories
+
           if (category.subcategories) {
             for (const subcategory of category.subcategories) {
               if (subcategory.name.toLowerCase().includes(query.toLowerCase())) {
@@ -405,106 +411,61 @@ export default function Search() {
           }
         }
       }
-      
-      // Search in profiles (sellers & manufacturers) for non-order searches
-        if (intent !== 'order') {
-          console.log('Searching in seller profiles...');
-          let profileResults: any[] = [];
-          
-          try {
-            // Sanitize query for tsquery - convert to proper format for PostgreSQL full-text search
-            const sanitizedQuery = query
-              .replace(/[\n\r\t]/g, ' ')  // Replace newlines and tabs with spaces
-              .replace(/[^\w\s]/g, ' ')   // Replace special characters with spaces
-              .replace(/\s+/g, ' ')       // Replace multiple spaces with single space
-              .trim()
-              .split(' ')                 // Split into words
-              .filter(word => word.length > 0) // Remove empty strings
-              .join(' & ');               // Join with AND operator for tsquery
-            
-            console.log(`Original query: "${query}", Sanitized for tsquery: "${sanitizedQuery}"`);
-            
-            const { data, error } = await supabase
-              .from('seller_details')
-              .select(`
-                user_id, 
-                business_name, 
-                address, 
-                image_url, 
-                profiles(id, role)
-              `)
-              .textSearch('business_name', sanitizedQuery);
-              
-            if (error) {
-              console.error('Error searching in seller_details:', error);
-            } else if (data && data.length > 0) {
-              console.log(`Found ${data.length} results in seller_details`);
-              
-              // Add these results to profileResults
-              data.forEach(seller => {
-                // @ts-ignore - accessing profiles
-                const role = seller.profiles?.role || 'seller';
-                
-                profileResults.push({
-                  id: seller.user_id,
-                  role: role,
-                  name: seller.business_name,
-                  image: seller.image_url,
-                  description: seller.address?.street || 'Wholesaler'
-                });
-              });
-            }
-          } catch (err) {
-            console.error('Exception in seller_details search:', err);
-          }
-          
-          // Add the seller results to our main results array
-          if (profileResults.length > 0) {
-            console.log(`Found ${profileResults.length} total sellers/manufacturers`);
-            
-            profileResults.forEach(profile => {
+
+      if (intent !== 'order') {
+        try {
+          const sanitizedQuery = query
+            .replace(/[\n\r\t]/g, ' ')
+            .replace(/[^\w\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .split(' ')
+            .filter(word => word.length > 0)
+            .join(' & ');
+
+          const { data, error } = await supabase
+            .from('seller_details')
+            .select(`user_id, business_name, address, image_url, profiles(id, role)`)
+            .textSearch('business_name', sanitizedQuery);
+
+          if (!error && data && data.length > 0) {
+            data.forEach(seller => {
+              // @ts-ignore
+              const role = seller.profiles?.role || 'seller';
               results.push({
-                type: profile.role as 'seller' | 'manufacturer',
-                id: profile.id,
-                name: profile.name,
-                image: profile.image,
-                description: profile.description
+                type: role as 'seller' | 'manufacturer',
+                id: seller.user_id,
+                name: seller.business_name,
+                image: seller.image_url,
+                description: seller.address?.street || 'Wholesaler'
               });
             });
-          } else {
-            console.log('No sellers or manufacturers found matching the search terms');
           }
+        } catch (err) {
+          console.error('Exception in seller_details search:', err);
         }
-      
-      // Handle auto-order mode for voice commands
+      }
+
       if (autoOrderMode && results.length > 0) {
         const productResults = results.filter(r => r.type === 'product');
         if (productResults.length > 0) {
           const firstProduct = productResults[0];
           const orderQuantity = parseInt(voiceQuantity as string) || 1;
-          
-          // Auto-add to cart
+
           try {
             if (user?.id && firstProduct.seller_id) {
-              await ProductSearchService.addToCartViaVoice(
-                user.id,
-                firstProduct.id,
-                orderQuantity
-              );
-              
+              await ProductSearchService.addToCartViaVoice(user.id, firstProduct.id, orderQuantity);
               setSnackbarMessage(`Added ${orderQuantity} ${firstProduct.name} to cart automatically!`);
               setSnackbarVisible(true);
               setAddedToCartIds(prev => ({ ...prev, [firstProduct.id]: true }));
             }
           } catch (error) {
-            console.error('Auto-order failed:', error);
             setSnackbarMessage('Auto-order failed. Please add manually.');
             setSnackbarVisible(true);
           }
         }
       }
-      
-      // Initialize quantities for voice search
+
       if (isVoiceSearch && voiceQuantity) {
         const initialQuantities: Record<string, number> = {};
         results.forEach(result => {
@@ -513,16 +474,11 @@ export default function Search() {
           }
         });
         setQuantities(initialQuantities);
-       }
+      }
 
-      console.log(`Total search results: ${results.length}`);
-      
-      // Translate search results
-      const translatedResults = await translateArrayFields(
-        results,
-        ['name', 'description', 'seller_name']
-      );
-      
+      // Note: Product names should NOT be translated - they are brand names/proper nouns
+      // Only translate description and seller_name, not product names
+      const translatedResults = await translateArrayFields(results, ['description', 'seller_name']);
       setResults(translatedResults);
     } catch (error) {
       console.error('Search error:', error);
@@ -549,236 +505,259 @@ export default function Search() {
 
   const renderProductItem = ({ item }: { item: SearchResult }) => {
     if (item.type !== 'product') return null;
-    
+
     const quantity = quantities[item.id] || item.min_quantity || 1;
-    
+    const isInStock = (item.stock_available || 0) > (item.min_quantity || 1);
+
     return (
-      <View
+      <TouchableOpacity
         style={styles.productCard}
+        onPress={() => handleResultPress(item)}
+        activeOpacity={0.9}
       >
-        <Card style={styles.productCardInner}>
-          <View style={styles.productHeader}>
-            <View style={styles.imageContainer}>
-              <ProductImage
-                imageUrl={item.image}
-                style={styles.productImage}
-                resizeMode="cover"
-              />
+        <View style={styles.productCardInner}>
+          {/* Product Image with Gradient Overlay */}
+          <View style={styles.productImageContainer}>
+            <ProductImage
+              imageUrl={item.image}
+              style={styles.productImage}
+              resizeMode="cover"
+            />
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.3)']}
+              style={styles.imageOverlay}
+            />
+            {/* Stock Badge */}
+            <View style={[styles.stockBadge, { backgroundColor: isInStock ? COLORS.success : COLORS.danger }]}>
+              <Text style={styles.stockBadgeText}>
+                {isInStock ? t('inStock') : t('outOfStock')}
+              </Text>
             </View>
-            <IconButton
-              icon="close"
-              size={20}
-              iconColor="#666"
+            {/* Remove Button */}
+            <TouchableOpacity
               style={styles.removeButton}
               onPress={(e) => {
                 e.stopPropagation();
                 removeProduct(item.id);
               }}
-            />
+            >
+              <Ionicons name="close-circle" size={24} color={COLORS.white} />
+            </TouchableOpacity>
           </View>
-          
+
+          {/* Product Details */}
           <View style={styles.productDetails}>
-            <Text numberOfLines={2} style={styles.productName}>{item?.name || getTranslatedText('Product Name')}</Text>
-            <Text numberOfLines={1} style={styles.productDescription}>{item?.description || getTranslatedText('No description available')}</Text>
-            
-            <View style={styles.sellerInfo}>
-              <Text style={styles.sellerLabel}>{getTranslatedText('Seller')}: </Text>
-              <Text style={styles.sellerName}>{item.seller_name || getTranslatedText('Seller')}</Text>
+            <Text numberOfLines={2} style={styles.productName}>
+              {item?.name || t('productName')}
+            </Text>
+
+            {/* Seller Badge */}
+            <View style={styles.sellerBadge}>
+              <Ionicons name="storefront-outline" size={12} color={COLORS.primary} />
+              <Text numberOfLines={1} style={styles.sellerNameText}>
+                {item.seller_name || t('seller')}
+              </Text>
             </View>
-            
-            <View style={styles.priceContainer}>
-              <Text style={styles.price}>₹{item.price}</Text>
-              <Text style={styles.unit}>/ {item.unit}</Text>
+
+            {/* Price Row */}
+            <View style={styles.priceRow}>
+              <Text style={styles.priceText}>₹{item.price}</Text>
+              <Text style={styles.unitText}>/ {item.unit}</Text>
             </View>
-            
-            <View style={styles.stockInfo}>
-              <Text style={styles.minOrderLabel}>{getTranslatedText('Min Order')}: </Text>
+
+            {/* Min Order Info */}
+            <View style={styles.minOrderRow}>
+              <Text style={styles.minOrderLabel}>{t('min')}: </Text>
               <Text style={styles.minOrderValue}>{item.min_quantity} {item.unit}s</Text>
-              {item.stock_available !== undefined && (
-                <Text style={[styles.stockStatus, { color: item.stock_available > (item.min_quantity || 1) ? '#4CAF50' : '#F44336' }]}>
-          • {item.stock_available > (item.min_quantity || 1) ? getTranslatedText('In stock') : getTranslatedText('Out of stock')}
-        </Text>
-              )}
             </View>
-            
+
+            {/* Quantity & Add to Cart */}
             <View style={styles.actionRow}>
-              <View style={styles.quantityContainer}>
-                <IconButton
-                  icon="minus"
-                  size={18}
-                  style={styles.quantityButton}
+              <View style={styles.quantitySelector}>
+                <TouchableOpacity
+                  style={styles.quantityBtn}
                   onPress={() => handleQuantityChange(item.id, false, item.min_quantity || 1)}
-                />
-                <Text style={styles.quantityText}>{quantity}</Text>
-                <IconButton
-                  icon="plus"
-                  size={18}
-                  style={styles.quantityButton}
+                >
+                  <Ionicons name="remove" size={16} color={COLORS.primary} />
+                </TouchableOpacity>
+                <Text style={styles.quantityValue}>{quantity}</Text>
+                <TouchableOpacity
+                  style={styles.quantityBtn}
                   onPress={() => handleQuantityChange(item.id, true, item.min_quantity || 1)}
-                />
+                >
+                  <Ionicons name="add" size={16} color={COLORS.primary} />
+                </TouchableOpacity>
               </View>
-              
-              <IconButton
-                icon={addedToCartIds[item.id] ? "check" : "cart-plus"}
-                iconColor={addedToCartIds[item.id] ? "#4CAF50" : "#666"}
-                size={24}
-                style={{ margin: 0, width: 40, height: 40 }}
+
+              <TouchableOpacity
+                style={[styles.addToCartBtn, addedToCartIds[item.id] && styles.addedBtn]}
                 onPress={(e) => {
                   e.stopPropagation();
                   handleAddToCart(item);
                 }}
-              />
+              >
+                <Ionicons
+                  name={addedToCartIds[item.id] ? "checkmark-circle" : "cart"}
+                  size={18}
+                  color={COLORS.white}
+                />
+              </TouchableOpacity>
             </View>
           </View>
-        </Card>
-      </View>
+        </View>
+      </TouchableOpacity>
     );
   };
 
   const renderSellerItem = ({ item }: { item: SearchResult }) => {
     if (item.type !== 'seller' && item.type !== 'manufacturer') return null;
-    
+
     return (
-      <Card
+      <TouchableOpacity
         style={styles.sellerCard}
         onPress={() => handleResultPress(item)}
+        activeOpacity={0.9}
       >
         <View style={styles.sellerCardInner}>
-          <View style={styles.sellerImageContainer}>
+          <View style={styles.sellerImageWrapper}>
             <ProductImage
               imageUrl={item.image}
               style={styles.sellerImage}
               resizeMode="cover"
             />
           </View>
-          <Card.Content style={styles.sellerContent}>
-            <Text variant="titleMedium" numberOfLines={1} style={styles.sellerName}>
-              {item.name}
-            </Text>
-            <Text variant="bodySmall" style={styles.sellerAddress} numberOfLines={1}>
-              {item.description}
-            </Text>
-            <Chip 
-              icon={item.type === 'seller' ? 'store' : 'factory'} 
-              style={styles.typeChip}
-              textStyle={styles.chipText}
-            >
-              {item.type === 'seller' ? getTranslatedText('Wholesaler') : getTranslatedText('Manufacturer')}
-            </Chip>
-          </Card.Content>
+          <View style={styles.sellerDetails}>
+            <Text style={styles.sellerTitle} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.sellerAddress} numberOfLines={1}>{item.description}</Text>
+            <View style={[styles.typeBadge, { backgroundColor: item.type === 'seller' ? '#E3F2FD' : '#F3E5F5' }]}>
+              <Ionicons
+                name={item.type === 'seller' ? 'business' : 'construct'}
+                size={12}
+                color={item.type === 'seller' ? '#1976D2' : '#7B1FA2'}
+              />
+              <Text style={[styles.typeBadgeText, { color: item.type === 'seller' ? '#1976D2' : '#7B1FA2' }]}>
+                {item.type === 'seller' ? t('wholesaler') : t('manufacturer')}
+              </Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.grey} />
         </View>
-      </Card>
+      </TouchableOpacity>
     );
   };
 
   const renderCategoryItem = ({ item }: { item: SearchResult }) => {
     if (item.type !== 'category') return null;
-    
+
     return (
-      <Card
+      <TouchableOpacity
         style={styles.categoryCard}
         onPress={() => handleResultPress(item)}
+        activeOpacity={0.9}
       >
-        <Card.Content style={styles.categoryContent}>
-          <Avatar.Icon 
-            icon="folder" 
-            size={40} 
-            style={styles.categoryIcon} 
-            color="#fff"
-          />
-          <View style={styles.categoryTextContainer}>
-            <Text variant="titleMedium">{item.name || 'Product'}</Text>
-            <Text variant="bodySmall">{item.description}</Text>
-          </View>
-          <IconButton 
-            icon="chevron-right" 
-            size={24} 
-          />
-        </Card.Content>
-      </Card>
+        <LinearGradient
+          colors={[COLORS.primary, COLORS.primaryLight]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.categoryIcon}
+        >
+          <Ionicons name="folder" size={24} color={COLORS.white} />
+        </LinearGradient>
+        <View style={styles.categoryDetails}>
+          <Text style={styles.categoryName}>{item.name || 'Product'}</Text>
+          <Text style={styles.categoryDescription}>{item.description}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={COLORS.grey} />
+      </TouchableOpacity>
     );
   };
 
-  const renderItem = ({ item }: { item: SearchResult }) => {
-    switch (item.type) {
-      case 'product':
-        return renderProductItem({ item });
-      case 'seller':
-      case 'manufacturer':
-        return renderSellerItem({ item });
-      case 'category':
-        return renderCategoryItem({ item });
-      default:
-        return null;
-    }
-  };
-
-  // Group filtered and sorted results by type
   const filteredAndSortedResults = getFilteredAndSortedResults();
   const groupedResults = filteredAndSortedResults.reduce((acc, item) => {
     acc[item.type] = acc[item.type] || [];
     acc[item.type].push(item);
     return acc;
   }, {} as Record<string, SearchResult[]>);
-  
+
   const renderResultsSection = () => {
     const hasProducts = groupedResults.product && groupedResults.product.length > 0;
     const hasSellers = groupedResults.seller && groupedResults.seller.length > 0;
     const hasManufacturers = groupedResults.manufacturer && groupedResults.manufacturer.length > 0;
     const hasCategories = groupedResults.category && groupedResults.category.length > 0;
-    
+
     return (
       <>
         {/* Products Section */}
         {hasProducts && (
           <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{getTranslatedText('Products')}</Text>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="cube" size={20} color={COLORS.primary} />
+              <Text style={styles.sectionTitle}>{t('products')}</Text>
+              <View style={styles.sectionBadge}>
+                <Text style={styles.sectionBadgeText}>{groupedResults.product?.length}</Text>
+              </View>
+            </View>
             <View style={styles.productsGrid}>
               {groupedResults.product?.map((item, index) => (
-                <View key={`product-${item.id}`} style={{ width: '48%', marginRight: index % 2 === 0 ? '4%' : 0 }}>
+                <View key={`product-${item.id}`} style={styles.productWrapper}>
                   {renderProductItem({ item })}
                 </View>
               ))}
             </View>
           </View>
         )}
+
         {/* Wholesalers Section */}
         {hasSellers && (
           <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{getTranslatedText('Wholesalers')}</Text>
-            <View style={styles.sellersList}>
-              {groupedResults.seller?.map((item) => (
-                <View key={`seller-${item.id}`}>
-                  {renderSellerItem({ item })}
-                </View>
-              ))}
+            <View style={styles.sectionHeader}>
+              <Ionicons name="business" size={20} color={COLORS.info} />
+              <Text style={styles.sectionTitle}>{t('wholesalers')}</Text>
+              <View style={[styles.sectionBadge, { backgroundColor: '#E3F2FD' }]}>
+                <Text style={[styles.sectionBadgeText, { color: '#1976D2' }]}>{groupedResults.seller?.length}</Text>
+              </View>
             </View>
+            {groupedResults.seller?.map((item) => (
+              <View key={`seller-${item.id}`}>
+                {renderSellerItem({ item })}
+              </View>
+            ))}
           </View>
         )}
+
         {/* Manufacturers Section */}
         {hasManufacturers && (
           <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{getTranslatedText('Manufacturers')}</Text>
-            <View style={styles.sellersList}>
-              {groupedResults.manufacturer?.map((item) => (
-                <View key={`manufacturer-${item.id}`}>
-                  {renderSellerItem({ item })}
-                </View>
-              ))}
+            <View style={styles.sectionHeader}>
+              <Ionicons name="construct" size={20} color="#7B1FA2" />
+              <Text style={styles.sectionTitle}>{t('manufacturers')}</Text>
+              <View style={[styles.sectionBadge, { backgroundColor: '#F3E5F5' }]}>
+                <Text style={[styles.sectionBadgeText, { color: '#7B1FA2' }]}>{groupedResults.manufacturer?.length}</Text>
+              </View>
             </View>
+            {groupedResults.manufacturer?.map((item) => (
+              <View key={`manufacturer-${item.id}`}>
+                {renderSellerItem({ item })}
+              </View>
+            ))}
           </View>
         )}
+
         {/* Categories Section */}
         {hasCategories && (
           <View style={styles.section}>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{getTranslatedText('Categories')}</Text>
-            <View style={styles.categoriesList}>
-              {groupedResults.category?.map((item) => (
-                <View key={`category-${item.id}`}>
-                  {renderCategoryItem({ item })}
-                </View>
-              ))}
+            <View style={styles.sectionHeader}>
+              <Ionicons name="folder" size={20} color={COLORS.success} />
+              <Text style={styles.sectionTitle}>{t('categories')}</Text>
+              <View style={[styles.sectionBadge, { backgroundColor: '#E8F5E9' }]}>
+                <Text style={[styles.sectionBadgeText, { color: COLORS.success }]}>{groupedResults.category?.length}</Text>
+              </View>
             </View>
+            {groupedResults.category?.map((item) => (
+              <View key={`category-${item.id}`}>
+                {renderCategoryItem({ item })}
+              </View>
+            ))}
           </View>
         )}
       </>
@@ -787,107 +766,128 @@ export default function Search() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <SystemStatusBar style="light" />
+
+      {/* Premium Header with Gradient */}
+      <LinearGradient
+        colors={[COLORS.primary, COLORS.primaryLight]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.header, { paddingTop: insets.top }]}
+      >
         <View style={styles.headerContent}>
-          <Text variant="titleMedium" style={styles.headerTitle}>
-          {isVoiceSearch ? (autoOrderMode ? "📷 OCR Order" : "📷 Scan Search") : "Search Results"}
-        </Text>
-          <View style={styles.headerRight}>
-            {userLocation && useLocationStore.getState().distanceFilter && (
-              <Chip
-                icon="map-marker-radius"
-                style={styles.distanceChip}
-                textStyle={styles.distanceChipText}
-              >
-                {useLocationStore.getState().distanceFilter}km
-              </Chip>
-            )}
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color={COLORS.white} />
+          </TouchableOpacity>
+
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>
+              {isVoiceSearch
+                ? (autoOrderMode ? t('ocrOrder') : t('scanSearch'))
+                : t('searchResults')}
+            </Text>
             {results.length > 0 && (
-              <Text variant="bodySmall" style={styles.headerResultsCount}>
-                {getFilteredAndSortedResults().length} results
+              <Text style={styles.headerSubtitle}>
+                {getFilteredAndSortedResults().length} {t('results')}
               </Text>
+            )}
+          </View>
+
+          <View style={styles.headerActions}>
+            {userLocation && useLocationStore.getState().distanceFilter && (
+              <View style={styles.distanceTag}>
+                <Ionicons name="location" size={14} color={COLORS.white} />
+                <Text style={styles.distanceTagText}>
+                  {useLocationStore.getState().distanceFilter}km
+                </Text>
+              </View>
             )}
             <CartIcon />
           </View>
         </View>
-        {autoOrderMode && (
-          <IconButton
-            icon="cart-plus"
-            iconColor="#4CAF50"
-            onPress={() => {}}
-          />
-        )}
-      </View>
+      </LinearGradient>
+
+      {/* Search Bar */}
       <View style={styles.searchContainer}>
-        <Searchbar
-          placeholder={getTranslatedText('Search wholesalers, products...')}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={() => performSearch(searchQuery)}
-          style={styles.searchBar}
-        />
+        <View style={styles.searchInputWrapper}>
+          <Ionicons name="search" size={20} color={COLORS.grey} style={styles.searchIcon} />
+          <Searchbar
+            placeholder={t('searchPlaceholder')}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={() => performSearch(searchQuery)}
+            style={styles.searchBar}
+            inputStyle={styles.searchInput}
+            iconColor={COLORS.grey}
+            placeholderTextColor={COLORS.grey}
+          />
+        </View>
       </View>
-      
-      {/* Filter and Sort Controls */}
+
+      {/* Sort Controls */}
       {results.length > 0 && (
-        <View style={styles.filtersContainer}>
-          <View style={styles.filtersRow}>
-            <IconButton
-              icon={showFilters ? "filter" : "filter-outline"}
-              iconColor={showFilters ? "#FF7D00" : "#666"}
-              size={24}
-              onPress={() => setShowFilters(!showFilters)}
-            />
-            <View style={styles.sortContainer}>
-              <Text variant="bodySmall" style={styles.sortLabel}>{getTranslatedText('Sort by')}:</Text>
-              <Chip
-                selected={sortOption === 'relevance'}
-                onPress={() => setSortOption('relevance')}
-                style={[styles.sortChip, sortOption === 'relevance' && styles.selectedChip]}
-                textStyle={styles.sortChipText}
-              >
-                {getTranslatedText('Relevance')}
-              </Chip>
-              <Chip
-                selected={sortOption === 'name'}
-                onPress={() => setSortOption('name')}
-                style={[styles.sortChip, sortOption === 'name' && styles.selectedChip]}
-                textStyle={styles.sortChipText}
-              >
-                {getTranslatedText('Name')}
-              </Chip>
-            </View>
+        <View style={styles.sortBar}>
+          <Text style={styles.sortLabel}>{t('sortBy')}:</Text>
+          <View style={styles.sortChips}>
+            <TouchableOpacity
+              style={[styles.sortChip, sortOption === 'relevance' && styles.sortChipActive]}
+              onPress={() => setSortOption('relevance')}
+            >
+              <Text style={[styles.sortChipText, sortOption === 'relevance' && styles.sortChipTextActive]}>
+                {t('relevance')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sortChip, sortOption === 'name' && styles.sortChipActive]}
+              onPress={() => setSortOption('name')}
+            >
+              <Text style={[styles.sortChipText, sortOption === 'name' && styles.sortChipTextActive]}>
+                {t('name')}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+      {/* Results Content */}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         {loading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#2196F3" />
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.loadingText}>{t('searching')}</Text>
           </View>
         ) : results.length > 0 ? (
           renderResultsSection()
         ) : (
           <View style={styles.noResults}>
-            <Text>{getTranslatedText('No results found for')} "{searchQuery}"</Text>
+            <View style={styles.noResultsIcon}>
+              <Ionicons name="search-outline" size={64} color={COLORS.lightGrey} />
+            </View>
+            <Text style={styles.noResultsTitle}>{t('noResultsFor')}</Text>
+            <Text style={styles.noResultsQuery}>"{searchQuery}"</Text>
+            <Text style={styles.noResultsHint}>{t('trySearchingFor')} products, sellers, or categories</Text>
           </View>
         )}
       </ScrollView>
-      
+
       <Snackbar
         visible={snackbarVisible}
         onDismiss={() => setSnackbarVisible(false)}
         duration={2000}
+        style={styles.snackbar}
         action={{
           label: "View Cart",
+          textColor: COLORS.primary,
           onPress: () => router.push('/(main)/cart'),
         }}
       >
         {snackbarMessage}
       </Snackbar>
 
-      {/* Distance Manager Modal */}
       <CartDistanceManager
         visible={showDistanceManager}
         onDismiss={() => setShowDistanceManager(false)}
@@ -897,320 +897,454 @@ export default function Search() {
   );
 }
 
-export default Search;
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.offWhite,
   },
+  // Header Styles
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    paddingTop: 12,
+    paddingBottom: 10,
+    paddingHorizontal: 12,
   },
   headerContent: {
-    flex: 1,
-    marginLeft: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  headerRight: {
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitleContainer: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.white,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 1,
+  },
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  distanceChip: {
-    backgroundColor: '#E3F2FD',
-    height: 28,
+  distanceTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
   },
-  distanceChipText: {
-    fontSize: 11,
-    color: '#1976D2',
-    fontWeight: '500',
+  distanceTagText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.white,
   },
-  headerResultsCount: {
-    color: '#666',
-    marginRight: 8,
-  },
-  headerTitle: {
-    fontWeight: 'bold',
-  },
-  headerSubtitle: {
-    color: '#666',
-    fontStyle: 'italic',
-  },
+  // Search Bar Styles
   searchContainer: {
-    padding: 8,
-    backgroundColor: '#fff',
+    padding: 16,
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: COLORS.lightGrey,
+  },
+  searchInputWrapper: {
+    position: 'relative',
+  },
+  searchIcon: {
+    position: 'absolute',
+    left: 16,
+    top: 14,
+    zIndex: 1,
   },
   searchBar: {
+    backgroundColor: COLORS.lightGrey,
+    borderRadius: 12,
     elevation: 0,
+    shadowOpacity: 0,
   },
-  list: {
+  searchInput: {
+    fontSize: 15,
+    paddingLeft: 36,
+  },
+  // Sort Bar Styles
+  sortBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 12,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGrey,
   },
+  sortLabel: {
+    fontSize: 13,
+    color: COLORS.grey,
+    marginRight: 12,
+  },
+  sortChips: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  sortChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: COLORS.lightGrey,
+  },
+  sortChipActive: {
+    backgroundColor: COLORS.primary,
+  },
+  sortChipText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: COLORS.darkGrey,
+  },
+  sortChipTextActive: {
+    color: COLORS.white,
+  },
+  // Scroll & Content
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 12,
+    padding: 16,
+    paddingBottom: 100,
   },
+  // Loading State
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingTop: 100,
   },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: COLORS.grey,
+  },
+  // No Results State
   noResults: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    opacity: 0.7,
+    paddingTop: 60,
   },
+  noResultsIcon: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: COLORS.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  noResultsTitle: {
+    fontSize: 16,
+    color: COLORS.grey,
+  },
+  noResultsQuery: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.secondary,
+    marginTop: 4,
+  },
+  noResultsHint: {
+    fontSize: 14,
+    color: COLORS.grey,
+    marginTop: 12,
+    textAlign: 'center',
+    paddingHorizontal: 40,
+  },
+  // Section Styles
   section: {
     marginBottom: 24,
   },
-  sectionTitle: {
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 12,
-    fontWeight: 'bold',
+    gap: 8,
   },
-  // Product card styles
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.secondary,
+    flex: 1,
+  },
+  sectionBadge: {
+    backgroundColor: '#FFF3E6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  sectionBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  // Product Card Styles
   productsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    paddingBottom: 16,
+    marginHorizontal: -6,
+  },
+  productWrapper: {
+    width: '50%',
+    paddingHorizontal: 6,
+    marginBottom: 12,
   },
   productCard: {
-    width: productCardWidth,
-    marginBottom: 12,
-    marginHorizontal: 4,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: COLORS.white,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
   },
   productCardInner: {
-    elevation: 2,
-  },
-  productHeader: {
-    position: 'relative',
-  },
-  imageContainer: {
+    borderRadius: 16,
     overflow: 'hidden',
+  },
+  productImageContainer: {
+    position: 'relative',
+    height: 120,
   },
   productImage: {
     width: '100%',
-    height: 80,
-    backgroundColor: '#f5f5f5',
+    height: '100%',
+    backgroundColor: COLORS.lightGrey,
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+  },
+  stockBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  stockBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLORS.white,
   },
   removeButton: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    margin: 0,
+    top: 8,
+    right: 8,
   },
   productDetails: {
-    padding: 4,
+    padding: 12,
   },
   productName: {
-    fontWeight: '600',
     fontSize: 14,
-    marginBottom: 1,
-    color: '#333',
-    lineHeight: 16,
+    fontWeight: '600',
+    color: COLORS.secondary,
+    lineHeight: 18,
+    marginBottom: 6,
   },
-  productDescription: {
-    fontSize: 8,
-    color: '#666',
-    marginBottom: 2,
-    lineHeight: 10,
-  },
-  sellerInfo: {
+  sellerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 2,
-    flexWrap: 'wrap',
+    marginBottom: 8,
+    gap: 4,
   },
-  sellerLabel: {
-    fontSize: 12,
-    color: '#666',
-  },
-  sellerName: {
-    fontSize: 7,
+  sellerNameText: {
+    fontSize: 11,
+    color: COLORS.primary,
     fontWeight: '500',
-    color: '#2196F3',
+    flex: 1,
   },
-
-  priceContainer: {
+  priceRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginBottom: 2,
+    marginBottom: 4,
   },
-  price: {
-    fontWeight: 'bold',
-    fontSize: 14,
-    color: '#2196F3',
+  priceText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary,
   },
-  unit: {
+  unitText: {
+    fontSize: 12,
+    color: COLORS.grey,
     marginLeft: 4,
-    fontSize: 12,
-    color: '#666',
   },
-  // Filter and Sort styles
-  filtersContainer: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  filtersRow: {
+  minOrderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  resultsCount: {
-    color: '#666',
-    flex: 1,
-    marginLeft: 8,
-  },
-  sortContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-  },
-  sortLabel: {
-    color: '#666',
-    marginRight: 8,
-  },
-  sortChip: {
-    marginHorizontal: 2,
-    height: 32,
-  },
-  selectedChip: {
-    backgroundColor: '#FF7D00',
-  },
-  sortChipText: {
-    fontSize: 12,
-  },
-  filterLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  resetButton: {
-    alignSelf: 'flex-start',
-  },
-  resetButtonText: {
-    fontSize: 12,
-    color: '#FF7D00',
-  },
-  stockInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 3,
-    flexWrap: 'wrap',
+    marginBottom: 10,
   },
   minOrderLabel: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 11,
+    color: COLORS.grey,
   },
   minOrderValue: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#333',
-  },
-  stockStatus: {
     fontSize: 11,
     fontWeight: '500',
+    color: COLORS.darkGrey,
   },
   actionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 2,
   },
-  quantityContainer: {
+  quantitySelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 16,
-    paddingHorizontal: 2,
+    backgroundColor: COLORS.lightGrey,
+    borderRadius: 20,
+    paddingHorizontal: 4,
   },
-  quantityButton: {
-    margin: 0,
-    width: 38,
-    height: 38,
+  quantityBtn: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  quantityText: {
-    marginHorizontal: 2,
-    fontWeight: '500',
-    minWidth: 14,
+  quantityValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.secondary,
+    minWidth: 24,
     textAlign: 'center',
-    fontSize: 16,
   },
-  // Seller card styles
-  sellersList: {
-    paddingBottom: 8,
+  addToCartBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
+  addedBtn: {
+    backgroundColor: COLORS.success,
+  },
+  // Seller Card Styles
   sellerCard: {
-    marginBottom: 12,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    marginBottom: 10,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     elevation: 2,
   },
   sellerCardInner: {
     flexDirection: 'row',
-    // Remove overflow: 'hidden' from here
+    alignItems: 'center',
+    padding: 12,
   },
-  sellerImageContainer: {
-    overflow: 'hidden', // Add this wrapper style
+  sellerImageWrapper: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: COLORS.lightGrey,
   },
   sellerImage: {
-    width: 100,
-    height: 100,
+    width: '100%',
+    height: '100%',
   },
-  sellerContent: {
+  sellerDetails: {
     flex: 1,
-    padding: 8,
+    marginLeft: 12,
   },
-  sellerName: {
+  sellerTitle: {
+    fontSize: 15,
     fontWeight: '600',
-    fontSize: 12,
+    color: COLORS.secondary,
+    marginBottom: 4,
   },
   sellerAddress: {
-    marginTop: 4,
-    color: '#666',
-  },
-  typeChip: {
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    height: 24,
-  },
-  chipText: {
     fontSize: 12,
+    color: COLORS.grey,
+    marginBottom: 6,
   },
-  // Category card styles
-  categoriesList: {
-    paddingBottom: 8,
-  },
-  categoryCard: {
-    marginBottom: 8,
-  },
-  categoryContent: {
+  typeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  typeBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Category Card Styles
+  categoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   categoryIcon: {
-    backgroundColor: '#4CAF50',
-    marginRight: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  categoryTextContainer: {
+  categoryDetails: {
     flex: 1,
+    marginLeft: 12,
   },
-
-
+  categoryName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.secondary,
+  },
+  categoryDescription: {
+    fontSize: 12,
+    color: COLORS.grey,
+    marginTop: 2,
+  },
+  // Snackbar
+  snackbar: {
+    backgroundColor: COLORS.secondary,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
 });

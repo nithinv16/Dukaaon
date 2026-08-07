@@ -1,7 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Image, Alert, BackHandler } from 'react-native';
-import { Text, Card, Button, IconButton, Avatar, TextInput, Divider, Switch, List } from 'react-native-paper';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  BackHandler,
+  Animated,
+  Dimensions,
+  Platform
+} from 'react-native';
+import { Text, Button, Avatar, TextInput, Switch } from 'react-native-paper';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+// BlurView removed - using simple View styling instead
+import * as Haptics from 'expo-haptics';
 import { SystemStatusBar } from '../../../components/SystemStatusBar';
 import { useAuthStore } from '../../../store/auth';
 import { supabase } from '../../../services/supabase/supabase';
@@ -9,11 +22,47 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { WHOLESALER_COLORS } from '../../../constants/colors';
 import { decode } from 'base64-arraybuffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { translationService } from '../../../services/translationService';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Premium color palette - refined and sophisticated
+const PREMIUM_COLORS = {
+  // Primary gradient colors
+  gradientStart: '#1a1f38',
+  gradientMid: '#242b4a',
+  gradientEnd: '#2d3654',
+
+  // Accent colors
+  accent: '#6C63FF',
+  accentLight: '#8B85FF',
+  accentSoft: 'rgba(108, 99, 255, 0.15)',
+
+  // Surface colors
+  cardBg: 'rgba(255, 255, 255, 0.95)',
+  cardBgDark: 'rgba(45, 54, 84, 0.9)',
+  glassBg: 'rgba(255, 255, 255, 0.08)',
+
+  // Text colors
+  textPrimary: '#1A1A2E',
+  textSecondary: '#6B7280',
+  textLight: 'rgba(255, 255, 255, 0.9)',
+  textMuted: 'rgba(255, 255, 255, 0.6)',
+
+  // Status colors
+  success: '#10B981',
+  successLight: 'rgba(16, 185, 129, 0.1)',
+  warning: '#F59E0B',
+  error: '#EF4444',
+
+  // Neutral colors
+  border: 'rgba(0, 0, 0, 0.06)',
+  divider: 'rgba(0, 0, 0, 0.04)',
+  shadow: 'rgba(0, 0, 0, 0.08)',
+};
 
 interface WholesalerProfile {
   id: string;
@@ -33,6 +82,16 @@ export default function WholesalerProfile() {
   const router = useRouter();
   const { user, clearAuth } = useAuthStore();
   const { currentLanguage } = useLanguage();
+
+  // Animation refs
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const cardAnimations = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
+
   const [translations, setTranslations] = useState({
     error: 'Error',
     success: 'Success',
@@ -194,7 +253,7 @@ export default function WholesalerProfile() {
   }, [currentLanguage]);
 
   const [profile, setProfile] = useState<WholesalerProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start false - will be true only when fetching
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     business_name: '',
@@ -212,21 +271,86 @@ export default function WholesalerProfile() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // Animate cards on mount
   useEffect(() => {
-    fetchProfile();
+    Animated.stagger(100, [
+      Animated.spring(cardAnimations[0], {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(cardAnimations[1], {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(cardAnimations[2], {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
   }, []);
+
+  useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID
+    if (!user?.id) {
+      console.log('WholesalerProfile: Waiting for user ID...');
+      setLoading(false); // Ensure not stuck in loading state
+      return;
+    }
+
+    console.log('WholesalerProfile: User ID available, fetching profile');
+
+    // IMMEDIATE: If user.seller_details is available, use it right away
+    if (user.seller_details) {
+      console.log('WholesalerProfile: Using seller_details from user object');
+      const sellerData = user.seller_details;
+      const profileImageUrl = sellerData.image_url || '';
+      const phoneNumber = sellerData.phone_number || user.phone_number || '';
+
+      setProfile({
+        id: sellerData.id || '',
+        business_name: sellerData.business_name || '',
+        owner_name: sellerData.owner_name || '',
+        phone_number: phoneNumber,
+        email: user.email || '',
+        address: sellerData.address || '',
+        gst_number: sellerData.gst_number || '',
+        business_license: sellerData.business_license || '',
+        profile_image_url: profileImageUrl,
+        verified: sellerData.verified || false,
+        created_at: sellerData.created_at || '',
+      });
+
+      setForm({
+        business_name: sellerData.business_name || '',
+        owner_name: sellerData.owner_name || '',
+        phone_number: phoneNumber,
+        address: sellerData.address || '',
+        gst_number: sellerData.gst_number || '',
+      });
+
+      setAvatarUrl(profileImageUrl);
+      setLoading(false);
+    }
+
+    // Still fetch to get the latest data
+    fetchProfile();
+  }, [user?.id, user?.seller_details]);
 
   // Handle back button navigation for profile screen
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Navigate back to the previous screen instead of exiting the app
       if (router.canGoBack()) {
         router.back();
-        return true; // Prevent default behavior
+        return true;
       } else {
-        // If we can't go back, navigate to wholesaler home
         router.replace('/(main)/wholesaler');
-        return true; // Prevent default behavior
+        return true;
       }
     });
 
@@ -234,20 +358,33 @@ export default function WholesalerProfile() {
   }, [router]);
 
   const fetchProfile = async () => {
-    try {
-      setLoading(true);
-      if (!user?.id) return;
+    // Guard: Don't fetch without user ID
+    if (!user?.id) {
+      console.log('fetchProfile: No user ID, skipping');
+      return;
+    }
 
-      // Fetch seller details including image_url from seller_details table
+    try {
+      // Only show loading if we don't have any data yet
+      if (!profile) {
+        setLoading(true);
+      }
+
+      console.log('fetchProfile: Fetching from Supabase for user:', user.id);
+
       const { data: sellerData, error } = await supabase
         .from('seller_details')
         .select('*')
         .eq('user_id', user.id)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('fetchProfile: Supabase error:', error);
+        throw error;
+      }
 
-      // Also fetch phone number from profiles table as fallback
+      console.log('fetchProfile: Got data:', sellerData?.business_name);
+
       let profilePhone = '';
       try {
         const { data: profileData, error: profileError } = await supabase
@@ -255,27 +392,18 @@ export default function WholesalerProfile() {
           .select('phone_number')
           .eq('id', user.id)
           .single();
-        
+
         if (!profileError && profileData) {
           profilePhone = profileData.phone_number || '';
-          console.log('Profile - Fetched phone from profiles table:', profilePhone);
         }
       } catch (profileError) {
         console.log('Profile - Could not fetch phone from profiles table:', profileError);
       }
 
       if (sellerData) {
-        console.log('Profile - Fetched seller details:', sellerData);
-        console.log('Profile - Business name:', sellerData?.business_name);
-        console.log('Profile - Owner name:', sellerData?.owner_name);
-        console.log('Profile - Phone from seller_details:', sellerData?.phone_number);
-        console.log('Profile - Phone from profiles table:', profilePhone);
-        
         const profileImageUrl = sellerData.image_url || '';
-        // Use phone from seller_details if available, otherwise use phone from profiles table
         const phoneNumber = sellerData.phone_number || profilePhone || '';
-        console.log('Profile - Final phone number used:', phoneNumber);
-        
+
         setProfile({
           id: sellerData.id,
           business_name: sellerData.business_name || '',
@@ -302,7 +430,10 @@ export default function WholesalerProfile() {
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
-      Alert.alert(translations.error, translations.failedToLoad);
+      // Only show error if we don't have fallback data
+      if (!profile) {
+        Alert.alert(translations.error, translations.failedToLoad);
+      }
     } finally {
       setLoading(false);
     }
@@ -310,7 +441,6 @@ export default function WholesalerProfile() {
 
   const pickImage = async () => {
     try {
-      // Request permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert(translations.permissionNeeded, translations.cameraPermissionMessage);
@@ -326,17 +456,17 @@ export default function WholesalerProfile() {
 
       if (!result.canceled && result.assets[0]) {
         setUploading(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
         try {
           const asset = result.assets[0];
-          
-          // Resize image using ImageManipulator
+
           const manipulatedImage = await ImageManipulator.manipulateAsync(
             asset.uri,
             [{ resize: { width: 2000, height: 2000 } }],
             { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
           );
-          
-          // Convert to base64
+
           const response = await fetch(manipulatedImage.uri);
           const blob = await response.blob();
           const base64Image = await new Promise<string>((resolve, reject) => {
@@ -349,9 +479,9 @@ export default function WholesalerProfile() {
             reader.onerror = reject;
             reader.readAsDataURL(blob);
           });
-          
+
           const filePath = `seller_${user?.id}/${Date.now()}.jpg`;
-          
+
           const { error: uploadError } = await supabase.storage
             .from('profiles')
             .upload(filePath, decode(base64Image), {
@@ -364,7 +494,6 @@ export default function WholesalerProfile() {
             .from('profiles')
             .getPublicUrl(filePath);
 
-          // Update the avatar URL in the seller_details table
           const { error: updateError } = await supabase
             .from('seller_details')
             .update({ image_url: publicUrl })
@@ -374,6 +503,7 @@ export default function WholesalerProfile() {
 
           setAvatarUrl(publicUrl);
           setUploading(false);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert(translations.success, translations.imageUpdatedSuccessfully);
         } catch (error) {
           console.error('Error uploading image:', error);
@@ -391,34 +521,81 @@ export default function WholesalerProfile() {
   const handleSaveProfile = async () => {
     try {
       setLoading(true);
-      
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      // Build current values and requested changes objects
+      const currentValues: Record<string, any> = {};
+      const requestedChanges: Record<string, any> = {};
+
+      // Check which fields have changed
+      if (form.business_name !== profile?.business_name) {
+        currentValues.business_name = profile?.business_name || '';
+        requestedChanges.business_name = form.business_name;
+      }
+      if (form.owner_name !== profile?.owner_name) {
+        currentValues.owner_name = profile?.owner_name || '';
+        requestedChanges.owner_name = form.owner_name;
+      }
+      if (form.phone_number !== profile?.phone_number) {
+        currentValues.phone_number = profile?.phone_number || '';
+        requestedChanges.phone_number = form.phone_number;
+      }
+      if (form.gst_number !== profile?.gst_number) {
+        currentValues.gst_number = profile?.gst_number || '';
+        requestedChanges.gst_number = form.gst_number;
+      }
+
+      // Handle address comparison (could be object or string)
+      const currentAddress = typeof profile?.address === 'object'
+        ? JSON.stringify(profile?.address)
+        : profile?.address || '';
+      const newAddress = typeof form.address === 'object'
+        ? JSON.stringify(form.address)
+        : form.address || '';
+
+      if (currentAddress !== newAddress) {
+        currentValues.address = profile?.address || '';
+        requestedChanges.address = form.address;
+      }
+
+      // If no changes, just close editing
+      if (Object.keys(requestedChanges).length === 0) {
+        setEditing(false);
+        Alert.alert('No Changes', 'No changes were made to your profile.');
+        return;
+      }
+
+      // Submit change request for approval
       const { error } = await supabase
-        .from('seller_details')
-        .update({
-          business_name: form.business_name,
-          owner_name: form.owner_name,
-          phone_number: form.phone_number,
-          address: form.address,
-          gst_number: form.gst_number,
-        })
-        .eq('user_id', user?.id);
+        .from('profile_change_requests')
+        .insert({
+          user_id: user?.id,
+          user_role: 'seller',
+          current_values: currentValues,
+          requested_changes: requestedChanges,
+          status: 'pending'
+        });
 
       if (error) throw error;
-      
-      // Update local state
-      setProfile(prev => prev ? {
-        ...prev,
-        business_name: form.business_name,
-        owner_name: form.owner_name,
-        phone_number: form.phone_number,
-        address: form.address,
-        gst_number: form.gst_number,
-      } : null);
-      
+
+      // Reset form to current values (changes are pending)
+      setForm({
+        business_name: profile?.business_name || '',
+        owner_name: profile?.owner_name || '',
+        phone_number: profile?.phone_number || '',
+        address: profile?.address || '',
+        gst_number: profile?.gst_number || '',
+      });
+
       setEditing(false);
-      Alert.alert(translations.success, translations.updatedSuccessfully);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        'Changes Submitted',
+        'Your profile changes have been submitted for approval. You will be notified once they are reviewed.',
+        [{ text: 'OK' }]
+      );
     } catch (error) {
-      console.error('Error updating profile:', error);
+      console.error('Error submitting profile changes:', error);
       Alert.alert(translations.error, translations.failedToUpdate);
     } finally {
       setLoading(false);
@@ -426,17 +603,17 @@ export default function WholesalerProfile() {
   };
 
   const handleLogout = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
       translations.confirmLogout,
       translations.logoutConfirmation,
       [
         { text: translations.cancel, style: 'cancel' },
-        { 
-          text: translations.logout, 
+        {
+          text: translations.logout,
           style: 'destructive',
           onPress: async () => {
             try {
-              // Clear AsyncStorage auth data first
               await AsyncStorage.multiRemove([
                 'auth_verified',
                 'user_phone',
@@ -445,14 +622,9 @@ export default function WholesalerProfile() {
                 'profile_id',
                 'verificationId'
               ]);
-              
-              // Sign out from Supabase
+
               await supabase.auth.signOut();
-              
-              // Clear auth state in the store
               clearAuth();
-              
-              // Navigate to language selection with replace to prevent back navigation
               router.replace('/(auth)/language');
             } catch (error) {
               console.error('Error during logout:', error);
@@ -475,30 +647,40 @@ export default function WholesalerProfile() {
       const location = await Location.getCurrentPositionAsync({});
       const { latitude, longitude } = location.coords;
 
+      // Submit location change for approval
       const { error } = await supabase
-        .from('profiles')
-        .update({
-          latitude,
-          longitude,
-          location_updated_at: new Date().toISOString(),
-          is_location_public: true,
-          location_verified: false,
-          location_verification_status: 'pending',
-        })
-        .eq('id', user?.id);
+        .from('profile_change_requests')
+        .insert({
+          user_id: user?.id,
+          user_role: 'seller',
+          current_values: {
+            latitude: user?.latitude || null,
+            longitude: user?.longitude || null
+          },
+          requested_changes: {
+            latitude,
+            longitude
+          },
+          status: 'pending'
+        });
 
       if (error) throw error;
 
-      alert(translations.locationUpdatedSuccessfully);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        'Location Update Submitted',
+        'Your location update has been submitted for approval. You will be notified once it is reviewed.',
+        [{ text: 'OK' }]
+      );
     } catch (error) {
-      console.error('Error confirming location:', error);
+      console.error('Error submitting location update:', error);
       alert(translations.failedToUpdateLocation);
     }
   };
 
   const formatAddress = (address: any) => {
     if (!address) return translations.noAddressProvided;
-    
+
     try {
       if (typeof address === 'object') {
         const parts = [];
@@ -506,10 +688,10 @@ export default function WholesalerProfile() {
         if (address.city) parts.push(address.city);
         if (address.state) parts.push(address.state);
         if (address.pincode) parts.push(address.pincode);
-        
+
         return parts.join(', ') || translations.noAddressProvided;
       }
-      
+
       return address.toString();
     } catch (error) {
       console.error('Error formatting address:', error);
@@ -519,7 +701,7 @@ export default function WholesalerProfile() {
 
   const formatAddressForInput = (address: any) => {
     if (!address) return '';
-    
+
     try {
       if (typeof address === 'object') {
         const parts = [];
@@ -527,10 +709,10 @@ export default function WholesalerProfile() {
         if (address.city) parts.push(address.city);
         if (address.state) parts.push(address.state);
         if (address.pincode) parts.push(address.pincode);
-        
+
         return parts.join(', ');
       }
-      
+
       return address.toString();
     } catch (error) {
       console.error('Error formatting address for input:', error);
@@ -538,146 +720,267 @@ export default function WholesalerProfile() {
     }
   };
 
+  const handleMenuItemPress = (route: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push(route as any);
+  };
+
+  const handleToggleNotification = (key: keyof typeof notifications, value: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setNotifications({ ...notifications, [key]: value });
+  };
+
+  // Render info row component
+  const InfoRow = ({ icon, label, value }: { icon: string; label: string; value: string }) => (
+    <View style={styles.infoRow}>
+      <View style={styles.infoIconContainer}>
+        <MaterialCommunityIcons name={icon as any} size={20} color={PREMIUM_COLORS.accent} />
+      </View>
+      <View style={styles.infoContent}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{value || 'Not provided'}</Text>
+      </View>
+    </View>
+  );
+
+  // Render menu item component
+  const MenuItem = ({ icon, label, onPress, isDestructive = false }: {
+    icon: string;
+    label: string;
+    onPress: () => void;
+    isDestructive?: boolean;
+  }) => (
+    <TouchableOpacity
+      style={styles.menuItem}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={[
+        styles.menuIconContainer,
+        isDestructive && styles.menuIconDestructive
+      ]}>
+        <MaterialCommunityIcons
+          name={icon as any}
+          size={20}
+          color={isDestructive ? PREMIUM_COLORS.error : PREMIUM_COLORS.accent}
+        />
+      </View>
+      <Text style={[
+        styles.menuLabel,
+        isDestructive && styles.menuLabelDestructive
+      ]}>
+        {label}
+      </Text>
+      {!isDestructive && (
+        <MaterialCommunityIcons
+          name="chevron-right"
+          size={20}
+          color={PREMIUM_COLORS.textSecondary}
+        />
+      )}
+    </TouchableOpacity>
+  );
+
+  // Render notification toggle component
+  const NotificationToggle = ({
+    label,
+    description,
+    value,
+    onToggle
+  }: {
+    label: string;
+    description: string;
+    value: boolean;
+    onToggle: (value: boolean) => void;
+  }) => (
+    <View style={styles.notificationRow}>
+      <View style={styles.notificationInfo}>
+        <Text style={styles.notificationLabel}>{label}</Text>
+        <Text style={styles.notificationDescription}>{description}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onToggle}
+        color={PREMIUM_COLORS.accent}
+        style={styles.switch}
+      />
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      <SystemStatusBar style="dark" />
-      
-      <ScrollView style={styles.content}>
-        <View style={styles.header}>
-          <IconButton 
-            icon="arrow-left" 
-            onPress={() => router.back()} 
-            color={WHOLESALER_COLORS.background}
-            size={24}
-          />
-          <Text variant="titleLarge" style={styles.headerTitle}>{translations.myProfile}</Text>
-          <View style={styles.headerRight} />
-        </View>
+      <SystemStatusBar style="light" />
 
-        <View style={styles.profileHeader}>
-          <View>
-            <Avatar.Image 
-              size={100} 
-              source={avatarUrl ? { uri: avatarUrl } : require('../../../assets/images/avatar.png')} 
-              style={styles.avatar}
-            />
-            <TouchableOpacity 
-              style={styles.editAvatarButton}
+      {/* Header gradient background */}
+      <LinearGradient
+        colors={[PREMIUM_COLORS.gradientStart, PREMIUM_COLORS.gradientMid, PREMIUM_COLORS.gradientEnd]}
+        style={styles.headerGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      />
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
+        {/* Header Section */}
+        <View style={styles.headerSection}>
+          {/* Back Button */}
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
+          >
+            <View style={styles.backButtonInner}>
+              <MaterialCommunityIcons name="arrow-left" size={22} color={PREMIUM_COLORS.textLight} />
+            </View>
+          </TouchableOpacity>
+
+          <Text style={styles.headerTitle}>{translations.myProfile}</Text>
+
+          {/* Profile Avatar Section */}
+          <View style={styles.avatarSection}>
+            <TouchableOpacity
               onPress={pickImage}
               disabled={uploading}
+              activeOpacity={0.8}
             >
-              <MaterialCommunityIcons name="camera" size={16} color="white" />
+              <View style={styles.avatarWrapper}>
+                <LinearGradient
+                  colors={[PREMIUM_COLORS.accent, PREMIUM_COLORS.accentLight]}
+                  style={styles.avatarGradientBorder}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <View style={styles.avatarInner}>
+                    <Avatar.Image
+                      size={100}
+                      source={avatarUrl ? { uri: avatarUrl } : require('../../../assets/images/avatar.png')}
+                    />
+                  </View>
+                </LinearGradient>
+
+                {/* Camera button */}
+                <TouchableOpacity
+                  style={styles.cameraButton}
+                  onPress={pickImage}
+                  disabled={uploading}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={[PREMIUM_COLORS.accent, PREMIUM_COLORS.accentLight]}
+                    style={styles.cameraButtonGradient}
+                  >
+                    <MaterialCommunityIcons
+                      name={uploading ? "loading" : "camera"}
+                      size={16}
+                      color="#FFFFFF"
+                    />
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
-          </View>
-          
-          <View style={styles.profileInfo}>
-            <Text variant="headlineSmall" style={styles.businessName}>
+
+            {/* Business Name */}
+            <Text style={styles.businessName}>
               {profile?.business_name || translations.yourBusiness}
             </Text>
+
+            {/* Verified Badge */}
             {profile?.verified && (
               <View style={styles.verifiedBadge}>
-                <MaterialCommunityIcons name="check-decagram" size={16} color={WHOLESALER_COLORS.success} />
-                <Text style={styles.verifiedText}>{translations.verifiedWholesaler}</Text>
+                <LinearGradient
+                  colors={['rgba(16, 185, 129, 0.2)', 'rgba(16, 185, 129, 0.1)']}
+                  style={styles.verifiedGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <MaterialCommunityIcons name="check-decagram" size={14} color={PREMIUM_COLORS.success} />
+                  <Text style={styles.verifiedText}>{translations.verifiedWholesaler}</Text>
+                </LinearGradient>
               </View>
             )}
           </View>
         </View>
 
-        <Card style={styles.card}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.sectionTitle}>{translations.businessInformation}</Text>
-              {!editing ? (
-                <Button 
-                  mode="text" 
-                  onPress={() => setEditing(true)}
-                  icon="pencil"
-                >
-                  {translations.edit}
-                </Button>
-              ) : (
-                <Button 
-                  mode="text" 
-                  onPress={() => setEditing(false)}
-                  icon="close"
-                >
-                  {translations.cancel}
-                </Button>
-              )}
+        {/* Cards Container */}
+        <View style={styles.cardsContainer}>
+          {/* Business Information Card */}
+          <Animated.View style={[
+            styles.card,
+            {
+              opacity: cardAnimations[0],
+              transform: [{
+                translateY: cardAnimations[0].interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [30, 0],
+                })
+              }]
+            }
+          ]}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleRow}>
+                <View style={styles.cardIconContainer}>
+                  <MaterialCommunityIcons name="store" size={18} color={PREMIUM_COLORS.accent} />
+                </View>
+                <Text style={styles.cardTitle}>{translations.businessInformation}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => setEditing(!editing)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.editButtonText}>
+                  {editing ? translations.cancel : translations.edit}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {!editing ? (
-              <>
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="store" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.businessName}</Text>
-                    <Text style={styles.infoValue}>{profile?.business_name || 'Not provided'}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="account" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.ownerName}</Text>
-                    <Text style={styles.infoValue}>{profile?.owner_name || 'Not provided'}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="phone" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.phoneNumber}</Text>
-                    <Text style={styles.infoValue}>{profile?.phone_number || 'Not provided'}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="email" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.email}</Text>
-                    <Text style={styles.infoValue}>{profile?.email || 'Not provided'}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="map-marker" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.address}</Text>
-                    <Text style={styles.infoValue}>
-                      {typeof profile?.address === 'object' 
-                        ? formatAddress(profile?.address)
-                        : profile?.address || 'No address provided'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <MaterialCommunityIcons name="file-document" size={24} color={WHOLESALER_COLORS.primary} />
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>{translations.gstNumber}</Text>
-                    <Text style={styles.infoValue}>{profile?.gst_number || 'Not provided'}</Text>
-                  </View>
-                </View>
-              </>
+              <View style={styles.infoContainer}>
+                <InfoRow icon="store" label={translations.businessName} value={profile?.business_name || ''} />
+                <InfoRow icon="account" label={translations.ownerName} value={profile?.owner_name || ''} />
+                <InfoRow icon="phone" label={translations.phoneNumber} value={profile?.phone_number || ''} />
+                <InfoRow icon="email" label={translations.email} value={profile?.email || ''} />
+                <InfoRow
+                  icon="map-marker"
+                  label={translations.address}
+                  value={typeof profile?.address === 'object'
+                    ? formatAddress(profile?.address)
+                    : profile?.address || ''}
+                />
+                <InfoRow icon="file-document" label={translations.gstNumber} value={profile?.gst_number || ''} />
+              </View>
             ) : (
-              <>
+              <View style={styles.editContainer}>
                 <TextInput
                   label={translations.businessName}
                   value={form.business_name}
                   onChangeText={(text) => setForm({ ...form, business_name: text })}
                   style={styles.input}
                   mode="outlined"
+                  outlineColor={PREMIUM_COLORS.border}
+                  activeOutlineColor={PREMIUM_COLORS.accent}
+                  theme={{ roundness: 12 }}
                 />
-                
+
                 <TextInput
                   label={translations.ownerName}
                   value={form.owner_name}
                   onChangeText={(text) => setForm({ ...form, owner_name: text })}
                   style={styles.input}
                   mode="outlined"
+                  outlineColor={PREMIUM_COLORS.border}
+                  activeOutlineColor={PREMIUM_COLORS.accent}
+                  theme={{ roundness: 12 }}
                 />
-                
+
                 <TextInput
                   label={translations.phoneNumber}
                   value={form.phone_number}
@@ -685,149 +988,190 @@ export default function WholesalerProfile() {
                   style={styles.input}
                   mode="outlined"
                   keyboardType="phone-pad"
+                  outlineColor={PREMIUM_COLORS.border}
+                  activeOutlineColor={PREMIUM_COLORS.accent}
+                  theme={{ roundness: 12 }}
                 />
-                
+
                 <TextInput
                   label={translations.address}
-                  value={typeof form.address === 'object' 
-                    ? formatAddressForInput(form.address) 
+                  value={typeof form.address === 'object'
+                    ? formatAddressForInput(form.address)
                     : form.address}
                   onChangeText={(text) => setForm({ ...form, address: text })}
                   style={styles.input}
                   mode="outlined"
                   multiline
+                  outlineColor={PREMIUM_COLORS.border}
+                  activeOutlineColor={PREMIUM_COLORS.accent}
+                  theme={{ roundness: 12 }}
                 />
-                
+
                 <TextInput
                   label={translations.gstNumber}
                   value={form.gst_number}
                   onChangeText={(text) => setForm({ ...form, gst_number: text })}
                   style={styles.input}
                   mode="outlined"
+                  outlineColor={PREMIUM_COLORS.border}
+                  activeOutlineColor={PREMIUM_COLORS.accent}
+                  theme={{ roundness: 12 }}
                 />
-                
-                <Button 
-                  mode="contained" 
+
+                <TouchableOpacity
+                  style={styles.saveButton}
                   onPress={handleSaveProfile}
-                  style={{ marginTop: 16 }}
-                  loading={loading}
                   disabled={loading}
+                  activeOpacity={0.8}
                 >
-                  {translations.saveChanges}
-                </Button>
-              </>
+                  <LinearGradient
+                    colors={[PREMIUM_COLORS.accent, PREMIUM_COLORS.accentLight]}
+                    style={styles.saveButtonGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
+                    <Text style={styles.saveButtonText}>{translations.saveChanges}</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             )}
-          </Card.Content>
-        </Card>
+          </Animated.View>
 
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{translations.notificationSettings}</Text>
-            
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>{translations.orderUpdates}</Text>
-                <Text style={styles.settingDescription}>{translations.orderUpdatesDescription}</Text>
+          {/* Notification Settings Card */}
+          <Animated.View style={[
+            styles.card,
+            {
+              opacity: cardAnimations[1],
+              transform: [{
+                translateY: cardAnimations[1].interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [30, 0],
+                })
+              }]
+            }
+          ]}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleRow}>
+                <View style={styles.cardIconContainer}>
+                  <MaterialCommunityIcons name="bell-outline" size={18} color={PREMIUM_COLORS.accent} />
+                </View>
+                <Text style={styles.cardTitle}>{translations.notificationSettings}</Text>
               </View>
-              <Switch 
-                value={notifications.orderUpdates} 
-                onValueChange={(value) => setNotifications({ ...notifications, orderUpdates: value })}
-                color={WHOLESALER_COLORS.primary}
-              />
             </View>
-            
-            <Divider style={styles.divider} />
-            
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>{translations.deliveryAlerts}</Text>
-                <Text style={styles.settingDescription}>{translations.deliveryAlertsDescription}</Text>
-              </View>
-              <Switch 
-                value={notifications.deliveryAlerts} 
-                onValueChange={(value) => setNotifications({ ...notifications, deliveryAlerts: value })}
-                color={WHOLESALER_COLORS.primary}
-              />
-            </View>
-            
-            <Divider style={styles.divider} />
-            
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>{translations.promotionsOffers}</Text>
-                <Text style={styles.settingDescription}>{translations.promotionsOffersDescription}</Text>
-              </View>
-              <Switch 
-                value={notifications.promotions} 
-                onValueChange={(value) => setNotifications({ ...notifications, promotions: value })}
-                color={WHOLESALER_COLORS.primary}
-              />
-            </View>
-            
-            <Divider style={styles.divider} />
-            
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>{translations.appUpdates}</Text>
-                <Text style={styles.settingDescription}>{translations.appUpdatesDescription}</Text>
-              </View>
-              <Switch 
-                value={notifications.appUpdates} 
-                onValueChange={(value) => setNotifications({ ...notifications, appUpdates: value })}
-                color={WHOLESALER_COLORS.primary}
-              />
-            </View>
-          </Card.Content>
-        </Card>
 
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text variant="titleMedium" style={styles.sectionTitle}>{translations.account}</Text>
-            
-            <List.Item
-              title={translations.changePassword}
-              left={props => <List.Icon {...props} icon="lock" color={WHOLESALER_COLORS.primary} />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/(main)/wholesaler/change-password')}
-              style={styles.listItem}
-            />
-            
-            <List.Item
-              title={translations.privacyPolicy}
-              left={props => <List.Icon {...props} icon="shield-account" color={WHOLESALER_COLORS.primary} />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/(main)/wholesaler/privacy')}
-              style={styles.listItem}
-            />
-            
-            <List.Item
-              title={translations.termsOfService}
-              left={props => <List.Icon {...props} icon="file-document" color={WHOLESALER_COLORS.primary} />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/(main)/wholesaler/terms')}
-              style={styles.listItem}
-            />
-            
-            <List.Item
-              title={translations.helpSupport}
-              left={props => <List.Icon {...props} icon="help-circle" color={WHOLESALER_COLORS.primary} />}
-              right={props => <List.Icon {...props} icon="chevron-right" />}
-              onPress={() => router.push('/(main)/wholesaler/help')}
-              style={styles.listItem}
-            />
-            
-            <List.Item
-              title={translations.logout}
-              left={props => <List.Icon {...props} icon="logout" color={WHOLESALER_COLORS.error} />}
-              onPress={handleLogout}
-              titleStyle={{ color: WHOLESALER_COLORS.error }}
-              style={styles.listItem}
-            />
-          </Card.Content>
-        </Card>
-        
-        <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>{translations.appVersion}</Text>
+            <View style={styles.notificationsContainer}>
+              <NotificationToggle
+                label={translations.orderUpdates}
+                description={translations.orderUpdatesDescription}
+                value={notifications.orderUpdates}
+                onToggle={(value) => handleToggleNotification('orderUpdates', value)}
+              />
+
+              <View style={styles.divider} />
+
+              <NotificationToggle
+                label={translations.deliveryAlerts}
+                description={translations.deliveryAlertsDescription}
+                value={notifications.deliveryAlerts}
+                onToggle={(value) => handleToggleNotification('deliveryAlerts', value)}
+              />
+
+              <View style={styles.divider} />
+
+              <NotificationToggle
+                label={translations.promotionsOffers}
+                description={translations.promotionsOffersDescription}
+                value={notifications.promotions}
+                onToggle={(value) => handleToggleNotification('promotions', value)}
+              />
+
+              <View style={styles.divider} />
+
+              <NotificationToggle
+                label={translations.appUpdates}
+                description={translations.appUpdatesDescription}
+                value={notifications.appUpdates}
+                onToggle={(value) => handleToggleNotification('appUpdates', value)}
+              />
+            </View>
+          </Animated.View>
+
+          {/* Account Card */}
+          <Animated.View style={[
+            styles.card,
+            {
+              opacity: cardAnimations[2],
+              transform: [{
+                translateY: cardAnimations[2].interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [30, 0],
+                })
+              }]
+            }
+          ]}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleRow}>
+                <View style={styles.cardIconContainer}>
+                  <MaterialCommunityIcons name="account-cog-outline" size={18} color={PREMIUM_COLORS.accent} />
+                </View>
+                <Text style={styles.cardTitle}>{translations.account}</Text>
+              </View>
+            </View>
+
+            <View style={styles.menuContainer}>
+              <MenuItem
+                icon="lock-outline"
+                label={translations.changePassword}
+                onPress={() => handleMenuItemPress('/(main)/wholesaler/change-password')}
+              />
+
+              <View style={styles.menuDivider} />
+
+              <MenuItem
+                icon="shield-check-outline"
+                label={translations.privacyPolicy}
+                onPress={() => handleMenuItemPress('/(main)/wholesaler/privacy')}
+              />
+
+              <View style={styles.menuDivider} />
+
+              <MenuItem
+                icon="file-document-outline"
+                label={translations.termsOfService}
+                onPress={() => handleMenuItemPress('/(main)/wholesaler/terms')}
+              />
+
+              <View style={styles.menuDivider} />
+
+              <MenuItem
+                icon="help-circle-outline"
+                label={translations.helpSupport}
+                onPress={() => handleMenuItemPress('/(main)/wholesaler/help')}
+              />
+
+              <View style={styles.menuDivider} />
+
+              <MenuItem
+                icon="web"
+                label="Seller Web Portal"
+                onPress={() => handleMenuItemPress('/(main)/wholesaler/seller-web-portal')}
+              />
+
+              <View style={styles.menuDivider} />
+
+              <MenuItem
+                icon="logout"
+                label={translations.logout}
+                onPress={handleLogout}
+                isDestructive
+              />
+            </View>
+          </Animated.View>
+
+          {/* Version Footer */}
+          <View style={styles.versionContainer}>
+            <Text style={styles.versionText}>{translations.appVersion}</Text>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -837,134 +1181,318 @@ export default function WholesalerProfile() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: WHOLESALER_COLORS.surface,
+    backgroundColor: '#F8F9FC',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    paddingTop: 0,
-    backgroundColor: WHOLESALER_COLORS.headerBg,
-    borderBottomWidth: 1,
-    borderBottomColor: WHOLESALER_COLORS.lightGrey,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: WHOLESALER_COLORS.background,
-  },
-  headerRight: {
-    width: 48,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  profileHeader: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  avatar: {
-    marginBottom: 12,
-  },
-  editAvatarButton: {
+  headerGradient: {
     position: 'absolute',
-    bottom: 10,
+    top: 0,
+    left: 0,
     right: 0,
-    backgroundColor: WHOLESALER_COLORS.primary,
-    borderRadius: 15,
-    width: 30,
-    height: 30,
+    height: 320,
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+
+  // Header Section
+  headerSection: {
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
+  backButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 40,
+    left: 20,
+    zIndex: 10,
+  },
+  backButtonInner: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: WHOLESALER_COLORS.background,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
-  profileInfo: {
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: PREMIUM_COLORS.textLight,
+    textAlign: 'center',
+    marginBottom: 24,
+    letterSpacing: -0.5,
+  },
+
+  // Avatar Section
+  avatarSection: {
     alignItems: 'center',
+  },
+  avatarWrapper: {
+    position: 'relative',
+    marginBottom: 16,
+  },
+  avatarGradientBorder: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    padding: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarInner: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    overflow: 'hidden',
+    backgroundColor: PREMIUM_COLORS.cardBg,
+  },
+  cameraButton: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+  },
+  cameraButtonGradient: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: PREMIUM_COLORS.gradientMid,
   },
   businessName: {
+    fontSize: 22,
     fontWeight: '600',
-    color: WHOLESALER_COLORS.darkGrey,
+    color: PREMIUM_COLORS.textLight,
+    marginBottom: 8,
+    letterSpacing: -0.3,
   },
   verifiedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
     marginTop: 4,
   },
+  verifiedGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
   verifiedText: {
-    marginLeft: 4,
-    color: WHOLESALER_COLORS.success,
+    fontSize: 13,
     fontWeight: '500',
+    color: PREMIUM_COLORS.success,
+  },
+
+  // Cards Container
+  cardsContainer: {
+    paddingHorizontal: 16,
+    marginTop: -20,
   },
   card: {
+    backgroundColor: PREMIUM_COLORS.cardBg,
+    borderRadius: 20,
     marginBottom: 16,
-    borderRadius: 8,
-    backgroundColor: WHOLESALER_COLORS.background,
+    padding: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: PREMIUM_COLORS.shadow,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.12,
+        shadowRadius: 24,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
   },
-  sectionHeader: {
+  cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  sectionTitle: {
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  cardIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: PREMIUM_COLORS.accentSoft,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardTitle: {
+    fontSize: 17,
     fontWeight: '600',
-    color: WHOLESALER_COLORS.darkGrey,
+    color: PREMIUM_COLORS.textPrimary,
+    letterSpacing: -0.2,
   },
-  input: {
-    marginBottom: 12,
-    backgroundColor: WHOLESALER_COLORS.background,
+  editButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: PREMIUM_COLORS.accentSoft,
+  },
+  editButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: PREMIUM_COLORS.accent,
+  },
+
+  // Info Section
+  infoContainer: {
+    gap: 4,
   },
   infoRow: {
     flexDirection: 'row',
-    marginBottom: 16,
     alignItems: 'flex-start',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: PREMIUM_COLORS.divider,
+  },
+  infoIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: PREMIUM_COLORS.accentSoft,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
   },
   infoContent: {
-    marginLeft: 12,
     flex: 1,
   },
   infoLabel: {
-    color: WHOLESALER_COLORS.mediumGrey,
     fontSize: 12,
+    fontWeight: '500',
+    color: PREMIUM_COLORS.textSecondary,
+    marginBottom: 3,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   infoValue: {
-    color: WHOLESALER_COLORS.darkGrey,
+    fontSize: 15,
     fontWeight: '500',
-    marginTop: 2,
+    color: PREMIUM_COLORS.textPrimary,
+    letterSpacing: -0.2,
   },
-  settingRow: {
+
+  // Edit Mode
+  editContainer: {
+    gap: 12,
+  },
+  input: {
+    backgroundColor: '#FFFFFF',
+    fontSize: 15,
+  },
+  saveButton: {
+    marginTop: 8,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  saveButtonGradient: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+
+  // Notifications Section
+  notificationsContainer: {
+    gap: 0,
+  },
+  notificationRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 14,
   },
-  settingInfo: {
+  notificationInfo: {
     flex: 1,
+    marginRight: 16,
   },
-  settingLabel: {
+  notificationLabel: {
+    fontSize: 15,
     fontWeight: '500',
-    color: WHOLESALER_COLORS.darkGrey,
+    color: PREMIUM_COLORS.textPrimary,
+    marginBottom: 3,
+    letterSpacing: -0.2,
   },
-  settingDescription: {
-    color: WHOLESALER_COLORS.mediumGrey,
-    fontSize: 12,
-    marginTop: 2,
+  notificationDescription: {
+    fontSize: 13,
+    color: PREMIUM_COLORS.textSecondary,
+    lineHeight: 18,
+  },
+  switch: {
+    transform: [{ scaleX: 0.9 }, { scaleY: 0.9 }],
   },
   divider: {
-    marginVertical: 8,
+    height: 1,
+    backgroundColor: PREMIUM_COLORS.divider,
   },
-  listItem: {
-    paddingLeft: 0,
+
+  // Menu Section
+  menuContainer: {
+    gap: 0,
   },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  menuIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: PREMIUM_COLORS.accentSoft,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  menuIconDestructive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  menuLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '500',
+    color: PREMIUM_COLORS.textPrimary,
+    letterSpacing: -0.2,
+  },
+  menuLabelDestructive: {
+    color: PREMIUM_COLORS.error,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: PREMIUM_COLORS.divider,
+    marginLeft: 50,
+  },
+
+  // Version
   versionContainer: {
     alignItems: 'center',
-    marginVertical: 24,
+    paddingVertical: 24,
   },
   versionText: {
-    color: WHOLESALER_COLORS.mediumGrey,
-    fontSize: 12,
+    fontSize: 13,
+    color: PREMIUM_COLORS.textSecondary,
+    fontWeight: '500',
   },
 });

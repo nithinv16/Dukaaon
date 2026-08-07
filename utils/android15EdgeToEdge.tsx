@@ -41,10 +41,10 @@ export const useEdgeToEdge = (config: EdgeToEdgeConfig = {}) => {
   // Create SystemBars component with proper configuration
   const SystemBarsComponent = () => {
     if (Platform.OS !== 'android') return null;
-    
+
     const style = config.statusBarStyle || 'auto';
     const hidden = config.hidden || false;
-    
+
     return (
       <SystemBars
         style={style}
@@ -83,10 +83,10 @@ export const configureEdgeToEdge = (config: EdgeToEdgeConfig = {}) => {
   if (Platform.OS !== 'android') {
     return () => null;
   }
-  
+
   const style = config.statusBarStyle || 'auto';
   const hidden = config.hidden || false;
-  
+
   return () => (
     <SystemBars
       style={style}
@@ -98,7 +98,7 @@ export const configureEdgeToEdge = (config: EdgeToEdgeConfig = {}) => {
 // Check if device supports Android 15 features
 export const isAndroid15Compatible = () => {
   if (Platform.OS !== 'android') return false;
-  
+
   try {
     const apiLevel = Platform.Version;
     return apiLevel >= 35; // Android 15 is API level 35
@@ -114,7 +114,7 @@ export const configureAndroid15EdgeToEdge = () => {
     console.log('Device does not support Android 15 features, using standard configuration');
     return configureEdgeToEdge();
   }
-  
+
   // Android 15 specific configuration using SystemBars component
   return () => (
     <SystemBars
@@ -131,7 +131,7 @@ export const EdgeToEdgeWrapper: React.FC<{
   style?: any;
 }> = ({ children, config = {}, style }) => {
   const { insets, SystemBarsComponent } = useEdgeToEdge(config);
-  
+
   return (
     <>
       <SystemBarsComponent />
@@ -150,13 +150,13 @@ export const EdgeToEdgeWrapper: React.FC<{
 export const ANDROID_15_CONSTANTS = {
   // Minimum SDK version that supports edge-to-edge by default
   EDGE_TO_EDGE_MIN_SDK: 35,
-  
+
   // Android 15 API level
   ANDROID_15_API_LEVEL: 35,
-  
+
   // 16KB page size support
   SUPPORTS_16KB_PAGE_SIZE: true,
-  
+
   // Deprecated API replacements - Now using SystemBars component from react-native-edge-to-edge
   DEPRECATED_APIS: {
     setStatusBarColor: 'Replaced with <SystemBars /> component from react-native-edge-to-edge',
@@ -166,7 +166,7 @@ export const ANDROID_15_CONSTANTS = {
     LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES: 'Use LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS',
     LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT: 'Use LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS',
   },
-  
+
   // Migration warnings addressed
   ADDRESSED_WARNINGS: [
     'android.view.Window.getStatusBarColor',

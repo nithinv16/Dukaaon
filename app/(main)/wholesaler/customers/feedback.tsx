@@ -21,7 +21,7 @@ export default function CustomerFeedback() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { currentLanguage } = useLanguage();
   const [feedback, setFeedback] = useState<Feedback[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState('');
   const [selectedFeedback, setSelectedFeedback] = useState<string | null>(null);
   const [translations, setTranslations] = useState({
@@ -48,24 +48,24 @@ export default function CustomerFeedback() {
   useEffect(() => {
     const loadTranslations = async () => {
       if (currentLanguage === 'en') return;
-      
+
       try {
         const results = await Promise.all([
-        translationService.translateText('Customer Feedback', currentLanguage),
-        translationService.translateText('Rating', currentLanguage),
-        translationService.translateText('Comment', currentLanguage),
-        translationService.translateText('Order #', currentLanguage),
-        translationService.translateText('Date', currentLanguage),
-        translationService.translateText('Response', currentLanguage),
-        translationService.translateText('Your Response', currentLanguage),
-        translationService.translateText('Add Response', currentLanguage),
-        translationService.translateText('Submit', currentLanguage),
-        translationService.translateText('Cancel', currentLanguage),
-        translationService.translateText('No feedback found', currentLanguage),
-        translationService.translateText('This customer has not provided any feedback yet.', currentLanguage),
-        translationService.translateText('Responded', currentLanguage),
-        translationService.translateText('Pending Response', currentLanguage)
-      ]);
+          translationService.translateText('Customer Feedback', currentLanguage),
+          translationService.translateText('Rating', currentLanguage),
+          translationService.translateText('Comment', currentLanguage),
+          translationService.translateText('Order #', currentLanguage),
+          translationService.translateText('Date', currentLanguage),
+          translationService.translateText('Response', currentLanguage),
+          translationService.translateText('Your Response', currentLanguage),
+          translationService.translateText('Add Response', currentLanguage),
+          translationService.translateText('Submit', currentLanguage),
+          translationService.translateText('Cancel', currentLanguage),
+          translationService.translateText('No feedback found', currentLanguage),
+          translationService.translateText('This customer has not provided any feedback yet.', currentLanguage),
+          translationService.translateText('Responded', currentLanguage),
+          translationService.translateText('Pending Response', currentLanguage)
+        ]);
 
         setTranslations({
           customerFeedback: results[0].translatedText,
@@ -120,8 +120,8 @@ export default function CustomerFeedback() {
 
       if (error) throw error;
 
-      setFeedback(feedback.map(f => 
-        f.id === feedbackId 
+      setFeedback(feedback.map(f =>
+        f.id === feedbackId
           ? { ...f, response, response_at: new Date().toISOString() }
           : f
       ));
@@ -214,7 +214,7 @@ export default function CustomerFeedback() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
+        <IconButton
           icon="arrow-left"
           onPress={() => router.back()}
         />

@@ -51,14 +51,11 @@ export function Footer() {
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
           {/* Company Info */}
           <div className="space-y-4">
-            <div className="flex items-center">
-              <img 
-                src="/logo.png" 
-                alt="DukaaOn" 
-                className="bg-white/10 rounded-lg shadow-md brightness-0 invert object-cover"
-                style={{ width: '180px', height: '46px' }}
-              />
-            </div>
+            <Link href="/" className="inline-block">
+              <div className="bg-primary-orange text-white font-bold text-2xl px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200">
+                dukaa<span className="text-neutral-dark">On</span>
+              </div>
+            </Link>
             <p className="text-sm text-neutral-medium">
               Tech-enabled distribution and financial inclusion platform for rural and semi-urban retailers.
             </p>

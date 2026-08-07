@@ -11,7 +11,7 @@ RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $
 DECLARE
   profile_record JSONB;
   existing_id UUID;
@@ -160,7 +160,7 @@ BEGIN
     );
   END;
 END;
-$$;
+$;
 
 -- Grant execution permissions
 GRANT EXECUTE ON FUNCTION public.handle_firebase_auth TO authenticated;

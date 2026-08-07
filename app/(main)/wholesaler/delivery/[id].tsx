@@ -1,16 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity } from 'react-native';
 import { Text, Card, Button, IconButton, Chip, Divider, ActivityIndicator, SegmentedButtons } from 'react-native-paper';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SystemStatusBar } from '../../../../components/SystemStatusBar';
 import { supabase } from '../../../../services/supabase/supabase';
 import { useAuthStore } from '../../../../store/auth';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Linking } from 'react-native';
-import { WHOLESALER_COLORS } from '../../../../constants/colors';
 import { useLanguage } from '../../../../contexts/LanguageContext';
 import { translationService } from '../../../../services/translationService';
+
+// --- Wholesaler Premium Theme (Navy/Teal) ---
+const THEME = {
+  primary: '#001F3F',    // Navy Blue
+  secondary: '#39CCCC',  // Teal
+  accent: '#7FDBFF',     // Sky Blue
+  success: '#39CCCC',    // Teal used for positive/success
+  warning: '#FF851B',    // Orange
+  error: '#FF4136',      // Red
+  background: 'transparent',
+  card: '#FFFFFF',
+  textPrimary: '#111111',
+  textSecondary: '#666666',
+  divider: '#E0E0E0',
+  inputBackground: '#F8F9FA',
+};
 
 interface DeliveryDetails {
   id: string;
@@ -44,7 +61,7 @@ export default function DeliveryDetails() {
   const user = useAuthStore(state => state.user);
   const { currentLanguage } = useLanguage();
   const [delivery, setDelivery] = useState<DeliveryDetails | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
 
   const [translations, setTranslations] = useState({
@@ -83,79 +100,68 @@ export default function DeliveryDetails() {
   });
 
   useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID and delivery ID
+    if (!user?.id || !id) {
+      console.log('DeliveryDetails: Waiting for user ID or delivery ID...');
+      return;
+    }
+    console.log('DeliveryDetails: Fetching details for delivery:', id);
     fetchDeliveryDetails();
-  }, [id]);
+  }, [id, user?.id]);
 
   useEffect(() => {
     const loadTranslations = async () => {
       if (currentLanguage === 'en') return;
-      
+
       try {
         const results = await Promise.all([
           translationService.translateText('Delivery Details', currentLanguage),
-        translationService.translateText('Order ID:', currentLanguage),
-        translationService.translateText('Customer:', currentLanguage),
-        translationService.translateText('Delivery Date:', currentLanguage),
-        translationService.translateText('Status:', currentLanguage),
-        translationService.translateText('Items:', currentLanguage),
-        translationService.translateText('Total Amount:', currentLanguage),
-        translationService.translateText('Delivery Address:', currentLanguage),
-        translationService.translateText('Special Instructions:', currentLanguage),
-        translationService.translateText('Update Status', currentLanguage),
-        translationService.translateText('Mark as Delivered', currentLanguage),
-        translationService.translateText('Cancel Delivery', currentLanguage),
-        translationService.translateText('Back to Deliveries', currentLanguage),
-        translationService.translateText('Pending', currentLanguage),
-        translationService.translateText('In Transit', currentLanguage),
-        translationService.translateText('Delivered', currentLanguage),
-        translationService.translateText('Cancelled', currentLanguage),
-        translationService.translateText('Loading delivery details...', currentLanguage),
-        translationService.translateText('Delivery not found', currentLanguage),
-        translationService.translateText('Failed to load delivery details', currentLanguage),
-        translationService.translateText('Success', currentLanguage),
-        translationService.translateText('Delivery status updated successfully', currentLanguage),
-        translationService.translateText('Error', currentLanguage),
-        translationService.translateText('Failed to update delivery status', currentLanguage),
-        translationService.translateText('OK', currentLanguage),
-        translationService.translateText('Confirm', currentLanguage),
-        translationService.translateText('Are you sure you want to mark this delivery as delivered?', currentLanguage),
-        translationService.translateText('Are you sure you want to cancel this delivery?', currentLanguage),
-        translationService.translateText('Yes', currentLanguage),
-        translationService.translateText('No', currentLanguage)
+          translationService.translateText('Order ID:', currentLanguage),
+          translationService.translateText('Customer:', currentLanguage),
+          translationService.translateText('Delivery Date:', currentLanguage),
+          translationService.translateText('Status:', currentLanguage),
+          translationService.translateText('Items:', currentLanguage),
+          translationService.translateText('Total Amount:', currentLanguage),
+          translationService.translateText('Delivery Address:', currentLanguage),
+          translationService.translateText('Special Instructions:', currentLanguage),
+          translationService.translateText('Update Status', currentLanguage),
+          translationService.translateText('Mark as Delivered', currentLanguage),
+          translationService.translateText('Cancel Delivery', currentLanguage),
+          translationService.translateText('Back to Deliveries', currentLanguage),
+          translationService.translateText('Pending', currentLanguage),
+          translationService.translateText('In Transit', currentLanguage),
+          translationService.translateText('Delivered', currentLanguage),
+          translationService.translateText('Cancelled', currentLanguage),
+          translationService.translateText('Loading delivery details...', currentLanguage),
+          translationService.translateText('Delivery not found', currentLanguage),
+          translationService.translateText('Failed to load delivery details', currentLanguage),
+          translationService.translateText('Success', currentLanguage),
+          translationService.translateText('Delivery status updated successfully', currentLanguage),
+          translationService.translateText('Error', currentLanguage),
+          translationService.translateText('Failed to update delivery status', currentLanguage),
+          translationService.translateText('OK', currentLanguage),
+          translationService.translateText('Confirm', currentLanguage),
+          translationService.translateText('Are you sure you want to mark this delivery as delivered?', currentLanguage),
+          translationService.translateText('Are you sure you want to cancel this delivery?', currentLanguage),
+          translationService.translateText('Yes', currentLanguage),
+          translationService.translateText('No', currentLanguage)
         ]);
-        
-        setTranslations({
+
+        setTranslations(prev => ({
+          ...prev,
           deliveryDetails: results[0].translatedText,
-          orderId: results[1].translatedText,
-          customer: results[2].translatedText,
-          deliveryDate: results[3].translatedText,
           status: results[4].translatedText,
-          items: results[5].translatedText,
-          totalAmount: results[6].translatedText,
-          deliveryAddress: results[7].translatedText,
-          specialInstructions: results[8].translatedText,
           updateStatus: results[9].translatedText,
-          markAsDelivered: results[10].translatedText,
-          cancelDelivery: results[11].translatedText,
-          backToDeliveries: results[12].translatedText,
+          cancel: results[11].translatedText,
           pending: results[13].translatedText,
           inTransit: results[14].translatedText,
           delivered: results[15].translatedText,
           cancelled: results[16].translatedText,
-          loadingDeliveryDetails: results[17].translatedText,
-          deliveryNotFound: results[18].translatedText,
-          failedToLoadDeliveryDetails: results[19].translatedText,
+          loading: results[17].translatedText,
           success: results[20].translatedText,
-          deliveryStatusUpdated: results[21].translatedText,
           error: results[22].translatedText,
-          failedToUpdateDeliveryStatus: results[23].translatedText,
-          ok: results[24].translatedText,
-          confirm: results[25].translatedText,
-          confirmMarkAsDelivered: results[26].translatedText,
-          confirmCancelDelivery: results[27].translatedText,
-          yes: results[28].translatedText,
-          no: results[29].translatedText
-        });
+          confirmCancel: results[27].translatedText,
+        }));
       } catch (error) {
         console.error('Translation loading failed:', error);
       }
@@ -193,10 +199,10 @@ export default function DeliveryDetails() {
         .eq('id', id);
 
       if (error) throw error;
-      
+
       // Update local state
       setDelivery(prev => prev ? { ...prev, delivery_status: newStatus as any } : null);
-      
+
       Alert.alert(translations.success, `Delivery status updated to ${newStatus}`);
     } catch (error) {
       console.error('Error updating delivery status:', error);
@@ -208,7 +214,7 @@ export default function DeliveryDetails() {
 
   const getRetailerName = () => {
     if (!delivery) return '';
-    
+
     if (delivery.retailer_id && delivery.retailer) {
       return delivery.retailer.business_details.shopName;
     } else if (delivery.manual_retailer) {
@@ -219,7 +225,7 @@ export default function DeliveryDetails() {
 
   const getRetailerAddress = () => {
     if (!delivery) return '';
-    
+
     if (delivery.retailer_id && delivery.retailer) {
       return delivery.retailer.business_details.address;
     } else if (delivery.manual_retailer) {
@@ -230,7 +236,7 @@ export default function DeliveryDetails() {
 
   const getRetailerPhone = () => {
     if (!delivery) return '';
-    
+
     if (delivery.retailer_id && delivery.retailer) {
       return delivery.retailer.phone_number;
     } else if (delivery.manual_retailer) {
@@ -250,11 +256,11 @@ export default function DeliveryDetails() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'pending': return WHOLESALER_COLORS.secondary;
-      case 'in_transit': return WHOLESALER_COLORS.primary;
-      case 'delivered': return WHOLESALER_COLORS.success;
-      case 'cancelled': return WHOLESALER_COLORS.error;
-      default: return WHOLESALER_COLORS.mediumGrey;
+      case 'pending': return THEME.warning;
+      case 'in_transit': return THEME.primary;
+      case 'delivered': return THEME.success;
+      case 'cancelled': return THEME.error;
+      default: return THEME.textSecondary;
     }
   };
 
@@ -289,13 +295,50 @@ export default function DeliveryDetails() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <IconButton 
-          icon="arrow-left" 
-          onPress={() => router.back()} 
-          color={WHOLESALER_COLORS.background}
+      <SystemStatusBar style="light" backgroundColor="transparent" translucent />
+
+      {/* Light Orange Gradient Background */}
+      <LinearGradient
+        colors={['#FFF3E0', '#FFFFFF', '#FFF8E1']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Decorative Gradient Background for Header */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, backgroundColor: THEME.primary, overflow: 'hidden' }}>
+        <LinearGradient
+          colors={[THEME.primary, '#003366']}
+          style={StyleSheet.absoluteFillObject}
         />
-        <Text variant="titleLarge">{translations.deliveryDetails}</Text>
+        {/* Subtle decorative circles */}
+        <View style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+        <View style={{ position: 'absolute', bottom: -20, left: -20, width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+      </View>
+
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            backgroundColor: 'rgba(255, 255, 255, 0.15)',
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.2)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          onPress={() => router.back()}
+        >
+          <IconButton
+            icon="arrow-left"
+            size={24}
+            iconColor="#FFFFFF"
+            onPress={() => router.back()}
+            style={{ margin: 0 }}
+          />
+        </TouchableOpacity>
+        <Text variant="titleLarge" style={{ color: '#FFFFFF', fontWeight: '700' }}>{translations.deliveryDetails}</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -304,25 +347,25 @@ export default function DeliveryDetails() {
         <Card style={styles.card}>
           <Card.Content>
             <View style={styles.statusContainer}>
-              <MaterialCommunityIcons 
-                name={getStatusIcon(delivery.delivery_status)} 
-                size={32} 
-                color={getStatusColor(delivery.delivery_status)} 
+              <MaterialCommunityIcons
+                name={getStatusIcon(delivery.delivery_status)}
+                size={32}
+                color={getStatusColor(delivery.delivery_status)}
               />
               <View style={styles.statusTextContainer}>
                 <Text variant="titleMedium">{translations.status}</Text>
-                <Chip 
+                <Chip
                   style={[
-                    styles.statusChip, 
+                    styles.statusChip,
                     { backgroundColor: `${getStatusColor(delivery.delivery_status)}20` }
                   ]}
                   textStyle={{ color: getStatusColor(delivery.delivery_status) }}
                 >
                   {delivery.delivery_status === 'pending' ? translations.pending :
-                   delivery.delivery_status === 'in_transit' ? translations.inTransit :
-                   delivery.delivery_status === 'delivered' ? translations.delivered :
-                   delivery.delivery_status === 'cancelled' ? translations.cancelled :
-                   delivery.delivery_status.replace('_', ' ')}
+                    delivery.delivery_status === 'in_transit' ? translations.inTransit :
+                      delivery.delivery_status === 'delivered' ? translations.delivered :
+                        delivery.delivery_status === 'cancelled' ? translations.cancelled :
+                          (delivery.delivery_status as string).replace('_', ' ')}
                 </Chip>
               </View>
             </View>
@@ -338,18 +381,18 @@ export default function DeliveryDetails() {
                     }
                   }}
                   buttons={[
-                    { 
-                      value: 'pending', 
+                    {
+                      value: 'pending',
                       label: translations.pending,
                       disabled: delivery.delivery_status === 'in_transit' || updating
                     },
-                    { 
-                      value: 'in_transit', 
+                    {
+                      value: 'in_transit',
                       label: translations.inTransit,
                       disabled: updating
                     },
-                    { 
-                      value: 'delivered', 
+                    {
+                      value: 'delivered',
                       label: translations.delivered,
                       disabled: updating
                     }
@@ -368,20 +411,20 @@ export default function DeliveryDetails() {
             <Text variant="titleLarge">{getRetailerName()}</Text>
             <Text variant="bodyMedium" style={styles.detailText}>{getRetailerAddress()}</Text>
             <Text variant="bodyMedium" style={styles.detailText}>{getRetailerPhone()}</Text>
-            
+
             <View style={styles.actionButtons}>
-              <Button 
-                mode="contained-tonal" 
-                icon="phone" 
-                onPress={() => {/* Call retailer */}}
+              <Button
+                mode="contained-tonal"
+                icon="phone"
+                onPress={() => {/* Call retailer */ }}
                 style={styles.actionButton}
               >
                 {translations.callRetailer}
               </Button>
-              <Button 
-                mode="contained-tonal" 
-                icon="message-text" 
-                onPress={() => {/* Message retailer */}}
+              <Button
+                mode="contained-tonal"
+                icon="message-text"
+                onPress={() => {/* Message retailer */ }}
                 style={styles.actionButton}
               >
                 Message
@@ -394,21 +437,21 @@ export default function DeliveryDetails() {
         <Card style={styles.card}>
           <Card.Content>
             <Text variant="titleMedium" style={styles.sectionTitle}>{translations.deliveryInfo}</Text>
-            
+
             <View style={styles.detailRow}>
               <Text variant="bodyMedium" style={styles.detailLabel}>Scheduled for:</Text>
               <Text variant="bodyMedium" style={styles.detailValue}>
                 {formatDateTime(delivery.delivery_date, delivery.delivery_time)}
               </Text>
             </View>
-            
+
             {delivery.amount_to_collect && (
               <View style={styles.detailRow}>
                 <Text variant="bodyMedium" style={styles.detailLabel}>{translations.amountToCollect}:</Text>
                 <Text variant="bodyMedium" style={styles.detailValue}>₹{delivery.amount_to_collect}</Text>
               </View>
             )}
-            
+
             {delivery.notes && (
               <>
                 <Text variant="bodyMedium" style={[styles.detailLabel, styles.notesLabel]}>{translations.notes}:</Text>
@@ -442,9 +485,9 @@ export default function DeliveryDetails() {
                   description={getRetailerAddress()}
                 />
               </MapView>
-              <Button 
-                mode="contained" 
-                icon="directions" 
+              <Button
+                mode="contained"
+                icon="directions"
                 onPress={() => {
                   /* Open in maps app */
                   const lat = delivery.retailer?.latitude;
@@ -462,17 +505,17 @@ export default function DeliveryDetails() {
 
         {/* Cancel Button */}
         {delivery.delivery_status !== 'delivered' && delivery.delivery_status !== 'cancelled' && (
-          <Button 
-            mode="outlined" 
-            icon="close-circle" 
+          <Button
+            mode="outlined"
+            icon="close-circle"
             onPress={() => {
               Alert.alert(
                 translations.cancel,
-                translations.cancelConfirmation,
+                translations.confirmCancel,
                 [
                   { text: 'No', style: 'cancel' },
-                  { 
-                    text: 'Yes', 
+                  {
+                    text: 'Yes',
                     style: 'destructive',
                     onPress: () => updateDeliveryStatus('cancelled')
                   }
@@ -493,22 +536,20 @@ export default function DeliveryDetails() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: WHOLESALER_COLORS.surface,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    paddingTop: 0,
-    backgroundColor: WHOLESALER_COLORS.headerBg,
-    borderBottomWidth: 1,
-    borderBottomColor: WHOLESALER_COLORS.lightGrey,
+    paddingTop: Platform.OS === 'android' ? 12 : 0,
+    backgroundColor: 'transparent',
+    marginBottom: 0,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: WHOLESALER_COLORS.background,
+    color: THEME.card,
   },
   headerRight: {
     width: 48,
@@ -521,7 +562,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 8,
     elevation: 2,
-    backgroundColor: WHOLESALER_COLORS.background,
+    backgroundColor: THEME.card,
   },
   statusContainer: {
     flexDirection: 'row',
@@ -540,7 +581,7 @@ const styles = StyleSheet.create({
   },
   updateText: {
     marginBottom: 8,
-    color: WHOLESALER_COLORS.darkGrey,
+    color: THEME.textPrimary,
   },
   segmentedButtons: {
     marginBottom: 8,
@@ -548,11 +589,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginBottom: 12,
     fontWeight: '600',
-    color: WHOLESALER_COLORS.darkGrey,
+    color: THEME.textPrimary,
   },
   detailText: {
     marginTop: 4,
-    color: WHOLESALER_COLORS.mediumGrey,
+    color: THEME.textSecondary,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -568,19 +609,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   detailLabel: {
-    color: WHOLESALER_COLORS.mediumGrey,
+    color: THEME.textSecondary,
     flex: 1,
   },
   detailValue: {
     flex: 2,
     fontWeight: '500',
-    color: WHOLESALER_COLORS.darkGrey,
+    color: THEME.textPrimary,
   },
   notesLabel: {
     marginBottom: 4,
   },
   notes: {
-    backgroundColor: WHOLESALER_COLORS.surface,
+    backgroundColor: THEME.inputBackground,
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
@@ -592,11 +633,11 @@ const styles = StyleSheet.create({
   },
   directionsButton: {
     marginTop: 8,
-    backgroundColor: WHOLESALER_COLORS.primary,
+    backgroundColor: THEME.primary,
   },
   cancelButton: {
     marginVertical: 16,
-    borderColor: WHOLESALER_COLORS.error,
+    borderColor: THEME.error,
   },
   loadingContainer: {
     flex: 1,
@@ -606,7 +647,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 16,
-    color: WHOLESALER_COLORS.mediumGrey,
+    color: THEME.textSecondary,
   },
   errorContainer: {
     flex: 1,
@@ -616,7 +657,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     marginVertical: 16,
-    color: WHOLESALER_COLORS.mediumGrey,
+    color: THEME.textSecondary,
     fontSize: 16,
   },
 });

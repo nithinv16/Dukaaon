@@ -5,12 +5,9 @@
  * in React components using the translation system.
  */
 
-import { useTranslation } from '../contexts/LanguageContext';
-import { 
-  translateCategoryName, 
-  translateSubcategoryName, 
-  translateCategoryOrSubcategory as translateUtil 
-} from '../utils/categoryTranslation';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translationService } from '../services/translationService';
 
 export interface CategoryTranslationHook {
   /**
@@ -45,66 +42,83 @@ export interface CategoryTranslationHook {
 
 /**
  * Hook for translating categories and subcategories
+ * Uses translationService for proper multilingual support
  * @returns Object with translation functions
  */
 export const useCategoryTranslation = (): CategoryTranslationHook => {
-  // Create a synchronous translation function similar to other components
-  const t = (key: string): string => {
-    // Basic translation mappings for categories and subcategories
-    const translations: Record<string, string> = {
-      // Categories
-      'categories.baby_care': 'Baby Care',
-      'categories.beauty_personal_care': 'Beauty & Personal Care',
-      'categories.beverages': 'Beverages',
-      'categories.dairy_eggs': 'Dairy & Eggs',
-      'categories.fruits_vegetables': 'Fruits & Vegetables',
-      'categories.grains_cereals': 'Grains & Cereals',
-      'categories.health_wellness': 'Health & Wellness',
-      'categories.household_cleaning': 'Household & Cleaning',
-      'categories.meat_seafood': 'Meat & Seafood',
-      'categories.packaged_foods': 'Packaged Foods',
-      'categories.snacks_confectionery': 'Snacks & Confectionery',
-      'categories.spices_condiments': 'Spices & Condiments',
-      
-      // Subcategories
-      'subcategories.baby_food': 'Baby Food',
-      'subcategories.diapers_wipes': 'Diapers & Wipes',
-      'subcategories.baby_care_products': 'Baby Care Products',
-      'subcategories.skincare': 'Skincare',
-      'subcategories.hair_care': 'Hair Care',
-      'subcategories.oral_care': 'Oral Care',
-      'subcategories.fragrances': 'Fragrances',
-      'subcategories.makeup': 'Makeup',
-      'subcategories.tea_coffee': 'Tea & Coffee',
-      'subcategories.soft_drinks': 'Soft Drinks',
-      'subcategories.juices': 'Juices',
-      'subcategories.energy_drinks': 'Energy Drinks',
-      'subcategories.water': 'Water',
-      'subcategories.milk': 'Milk',
-      'subcategories.cheese': 'Cheese',
-      'subcategories.yogurt': 'Yogurt',
-      'subcategories.eggs': 'Eggs',
-      'subcategories.butter': 'Butter',
-    };
-    
-    return translations[key] || key;
-  };
+  const { currentLanguage } = useLanguage();
+  const [translationCache, setTranslationCache] = useState<Record<string, string>>({});
+  const pendingTranslations = useRef<Set<string>>(new Set());
 
-  const translateCategoryOrSubcategory = (name: string, isCategory: boolean): string => {
-    return translateUtil(name, isCategory, t);
-  };
+  // Clear cache when language changes
+  useEffect(() => {
+    setTranslationCache({});
+    pendingTranslations.current.clear();
+  }, [currentLanguage]);
 
-  const translateCategory = (categoryName: string): string => {
-    return translateCategoryName(categoryName, t);
-  };
+  // Get cached translation synchronously - DOES NOT update state during render
+  const getTranslation = useCallback((name: string): string => {
+    // Return original for English  
+    if (currentLanguage === 'en' || !name) {
+      return name;
+    }
 
-  const translateSubcategory = (subcategoryName: string): string => {
-    return translateSubcategoryName(subcategoryName, t);
-  };
+    // Check local cache first
+    const cacheKey = `${name}__${currentLanguage}`;
+    if (translationCache[cacheKey]) {
+      return translationCache[cacheKey];
+    }
 
-  const translateMultiple = (items: Array<{ name: string; isCategory: boolean }>): string[] => {
+    // Check translationService cache synchronously
+    const cachedTranslation = translationService.getCachedTranslationSync(name, currentLanguage);
+    if (cachedTranslation) {
+      // Schedule cache update for after render (using setTimeout to avoid setState during render)
+      if (!pendingTranslations.current.has(cacheKey)) {
+        pendingTranslations.current.add(cacheKey);
+        setTimeout(() => {
+          setTranslationCache(prev => ({ ...prev, [cacheKey]: cachedTranslation }));
+          pendingTranslations.current.delete(cacheKey);
+        }, 0);
+      }
+      return cachedTranslation;
+    }
+
+    // Trigger background translation (non-blocking, after render)
+    if (!pendingTranslations.current.has(cacheKey)) {
+      pendingTranslations.current.add(cacheKey);
+      setTimeout(() => {
+        translationService.translateText(name, currentLanguage)
+          .then(result => {
+            if (result?.translatedText) {
+              setTranslationCache(prev => ({ ...prev, [cacheKey]: result.translatedText }));
+            }
+            pendingTranslations.current.delete(cacheKey);
+          })
+          .catch(() => {
+            pendingTranslations.current.delete(cacheKey);
+          });
+      }, 0);
+    }
+
+    // Return original while translation loads
+    return name;
+  }, [currentLanguage, translationCache]);
+
+  const translateCategoryOrSubcategory = useCallback((name: string, _isCategory: boolean): string => {
+    return getTranslation(name);
+  }, [getTranslation]);
+
+  const translateCategory = useCallback((categoryName: string): string => {
+    return getTranslation(categoryName);
+  }, [getTranslation]);
+
+  const translateSubcategory = useCallback((subcategoryName: string): string => {
+    return getTranslation(subcategoryName);
+  }, [getTranslation]);
+
+  const translateMultiple = useCallback((items: Array<{ name: string; isCategory: boolean }>): string[] => {
     return items.map(item => translateCategoryOrSubcategory(item.name, item.isCategory));
-  };
+  }, [translateCategoryOrSubcategory]);
 
   return {
     translateCategoryOrSubcategory,

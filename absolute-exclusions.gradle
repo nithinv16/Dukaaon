@@ -1,7 +1,7 @@
 // ABSOLUTE EXCLUSIONS - Final solution to eliminate ALL support library conflicts
 // This script uses the most aggressive exclusion techniques possible
-
-apply plugin: 'com.android.application'
+// NOTE: This is a configuration script - do NOT apply plugins here
+// The target project must already have 'com.android.application' plugin applied
 
 // Global configuration to reject ALL support libraries
 configurations.all {

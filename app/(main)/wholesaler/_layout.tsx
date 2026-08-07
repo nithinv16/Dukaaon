@@ -2,32 +2,35 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { SellerBottomNav } from '../../../components/navigation/SellerBottomNav';
-import { useEdgeToEdge, getSafeAreaStyles } from '../../../utils/android15EdgeToEdge';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function WholesalerLayout() {
   console.log('WholesalerLayout rendering');
-  
-  const { insets } = useEdgeToEdge({ statusBarStyle: 'dark' });
-  
-  // Calculate dynamic bottom navigation height based on device insets
-  const bottomNavHeight = 20 + insets.bottom;
-  const contentMargin = 20; // Fixed margin without extra inset padding
-  
+  const insets = useSafeAreaInsets();
+
+  // Bottom nav height: nav content (85) + safe area inset
+  const BOTTOM_NAV_HEIGHT = 85;
+  const totalBottomHeight = BOTTOM_NAV_HEIGHT + insets.bottom;
+
   return (
-    <View style={[styles.container, getSafeAreaStyles(insets)]}>
-      <View style={[styles.content, { marginBottom: contentMargin }]}>
+    <View style={styles.container}>
+      {/* Main content area with padding to prevent overlap with bottom nav */}
+      <View style={[styles.content, { paddingBottom: totalBottomHeight }]}>
         <Stack
-          screenOptions={({ route }) => ({
+          screenOptions={{
             headerShown: false,
-            gestureEnabled: true
-          })}
-        >
-        </Stack>
+            gestureEnabled: true,
+            animation: 'none',
+            header: () => null,
+          }}
+        />
       </View>
-      <View style={[styles.bottomNavContainer, { 
-        height: bottomNavHeight,
-        paddingBottom: insets.bottom
-      }]}>
+
+      {/* Bottom Navigation - positioned at the very bottom */}
+      <View style={[
+        styles.bottomNavContainer,
+        { height: totalBottomHeight, paddingBottom: insets.bottom }
+      ]}>
         <SellerBottomNav />
       </View>
     </View>
@@ -48,11 +51,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: '#fff',
-    elevation: 24,
-    zIndex: 1100,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    // Shadow for iOS
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
+    shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 6,
+    // Elevation for Android
+    elevation: 16,
   },
 });

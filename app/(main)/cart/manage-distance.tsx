@@ -269,8 +269,8 @@ export default function ManageCartDistance() {
                 
                 <Divider style={styles.divider} />
                 
-                {seller.items.map((item) => (
-                  <View key={item.uniqueId} style={styles.itemRow}>
+                {seller.items.map((item, index) => (
+                  <View key={`${item.uniqueId}-${index}`} style={styles.itemRow}>
                     <ProductImage 
                       imageUrl={item.image_url} 
                       style={styles.itemImage} 

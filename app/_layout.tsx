@@ -19,14 +19,21 @@ import { NotificationProvider } from '../providers/NotificationProvider';
 import { useAuthStore } from '../store/auth';
 import { useSettingsStore } from '../store/settings';
 import { View, ActivityIndicator, Text } from 'react-native';
-import { useEffect, useState, useRef } from 'react';
+import { CartAnimationProvider } from '../contexts/CartAnimationContext';
+import CartAnimationOverlay from '../components/cart/CartAnimationOverlay';
+import React, { useEffect, useRef, useState } from 'react';
 import { NotificationService } from '../services/notifications/NotificationService';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureEdgeToEdge } from '../utils/android15EdgeToEdge';
-import { SystemBars } from 'react-native-edge-to-edge';
 import { useRouter } from 'expo-router';
 import * as Sentry from '@sentry/react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Import ProductCacheService for cache warming - Requirements 7.5
+import { ProductCacheService } from '../services/products/ProductCacheService';
+
+// Import services for early initialization
+import { dynamicCategoryService } from '../services/dynamic/dynamicCategoryService';
+import { translationService } from '../services/translationService';
 
 Sentry.init({
   dsn: 'https://571c5f83af1d8cbcd0fb71edfd76a1c0@o4509453256622080.ingest.de.sentry.io/4509453272744016',
@@ -48,105 +55,141 @@ export default Sentry.wrap(function RootLayout() {
   const session = useAuthStore((state: any) => state.session);
   const loading = useAuthStore((state: any) => state.loading);
   const checkNotificationPermissions = useSettingsStore((state) => state.checkNotificationPermissions);
-  const [timeoutOccurred, setTimeoutOccurred] = useState(false);
   const router = useRouter();
   const previousSession = useRef(session);
 
-  // Initialize notification service after Firebase is ready
+  // Initialize notification service after Firebase is ready (non-blocking)
+  // This runs in background and doesn't block UI rendering
   useEffect(() => {
     const initializeNotifications = async () => {
       try {
-        console.log('App: Waiting for Firebase initialization...');
-        await waitForFirebaseInitialization();
-        console.log('App: Firebase ready, starting NotificationService initialization...');
-        
-        await NotificationService.initialize();
-        console.log('App: NotificationService initialized successfully');
-        
-        // Check and sync notification permission status with settings
-        console.log('App: Checking notification permissions...');
-        await checkNotificationPermissions();
-        console.log('App: Notification permissions checked');
+        // Use setTimeout to ensure this doesn't block initial render
+        setTimeout(async () => {
+          try {
+            console.log('App: Waiting for Firebase initialization...');
+            await waitForFirebaseInitialization();
+            console.log('App: Firebase ready, starting NotificationService initialization...');
+
+            await NotificationService.initialize();
+            console.log('App: NotificationService initialized successfully');
+
+            // Check and sync notification permission status with settings
+            console.log('App: Checking notification permissions...');
+            await checkNotificationPermissions();
+            console.log('App: Notification permissions checked');
+          } catch (error) {
+            console.error('App: NotificationService initialization failed:', error);
+          }
+        }, 100); // Small delay to ensure UI renders first
       } catch (error) {
-        console.error('App: NotificationService initialization failed:', error);
+        console.error('App: NotificationService initialization setup failed:', error);
       }
     };
-    
+
     initializeNotifications();
   }, [checkNotificationPermissions]);
-  
+
+  // CRITICAL: Initialize translation and category caches IMMEDIATELY at startup
+  // This runs before anything else to ensure home screen has cached data
+  useEffect(() => {
+    const initializeCaches = async () => {
+      try {
+        // Run both initializations in parallel for fastest startup
+        await Promise.all([
+          translationService.initialize(),
+          dynamicCategoryService.initialize(),
+        ]);
+        console.log('App: Translation and category caches initialized');
+      } catch (error) {
+        console.warn('App: Cache initialization failed (non-critical):', error);
+      }
+    };
+
+    // Initialize immediately - no delay
+    initializeCaches();
+  }, []);
+
+  // Warm product cache on app start - Requirements 7.5
+  // Loads products for 5 most recently viewed wholesalers into memory cache
+  useEffect(() => {
+    const warmProductCache = async () => {
+      try {
+        console.log('App: Starting product cache warming...');
+        const startTime = Date.now();
+
+        // Warm cache with recently viewed wholesalers (limit 5)
+        await ProductCacheService.warmCache();
+
+        const duration = Date.now() - startTime;
+        console.log(`App: Product cache warming complete in ${duration}ms`);
+      } catch (error) {
+        // Cache warming is non-critical, log and continue
+        console.warn('App: Product cache warming failed:', error);
+      }
+    };
+
+    // Run cache warming after a short delay to not block initial render
+    const timeoutId = setTimeout(warmProductCache, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, []);
+
   // Get edge-to-edge configuration component
   const EdgeToEdgeComponent = configureEdgeToEdge({
     statusBarStyle: 'auto',
     hidden: false
   });
 
-  // Handle session changes and navigation
+  // Track if layout is mounted to prevent navigation before mount
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Handle session changes and navigation (logout detection)
+  // Navigation on app launch is handled by index.tsx using SimpleAuthLoader
   useEffect(() => {
     // Only navigate to language screen if we had a session and now don't (explicit logout)
     if (previousSession.current && !session && !loading) {
       console.log('Session cleared (user logged out), navigating to language screen');
-      router.replace('/(auth)/language');
+      // Defer navigation to next tick to ensure layout is fully rendered
+      // This prevents "Attempted to navigate before mounting the Root Layout" error
+      setTimeout(() => {
+        if (isMounted.current) {
+          router.replace('/(auth)/language');
+        }
+      }, 0);
     }
-    
+
     previousSession.current = session;
   }, [session, loading, router]);
 
-  // Add safety timeout to prevent getting stuck in loading state - ONLY during initial app load
-  useEffect(() => {
-    // Only apply timeout during initial loading, not when app is resumed
-    if (!previousSession.current && loading && !session) {
-      console.log('Layout: Starting initial auth timeout (20 seconds)');
-      
-      const timeoutId = setTimeout(() => {
-        // Double-check we're still in initial loading state
-        if (loading && !session && !previousSession.current) {
-          console.log('Layout: Initial auth loading timed out after 20 seconds');
-          
-          // Check if there's any cached auth data before clearing
-          const checkCachedAuth = async () => {
-            try {
-              const authVerified = await AsyncStorage.getItem('auth_verified');
-              const userId = await AsyncStorage.getItem('user_id');
-              const currentState = useAuthStore.getState();
-              
-              // If we have cached auth data, don't clear - just force loading to false
-              if (authVerified === 'true' && userId) {
-                console.log('Layout: Found cached auth data, forcing loading state to false instead of clearing');
-                // Just set loading to false, don't clear auth
-                useAuthStore.setState({ loading: false });
-                setTimeoutOccurred(true);
-              } else {
-                // No cached auth data, safe to clear
-                console.log('Layout: No cached auth data found, clearing auth state');
-                currentState.clearAuth();
-                setTimeoutOccurred(true);
-              }
-            } catch (error) {
-              console.error('Layout: Error checking cached auth:', error);
-              useAuthStore.getState().clearAuth();
-              setTimeoutOccurred(true);
-            }
-          };
-          
-          checkCachedAuth();
-        } else {
-          console.log('Layout: Auth timeout cancelled - session found or not in initial loading state');
-        }
-      }, 20000);
+  // Add timeout state to prevent infinite loading screen
+  const [showLoading, setShowLoading] = useState(true);
 
-      return () => {
-        console.log('Layout: Clearing initial auth timeout');
-        clearTimeout(timeoutId);
-      };
+  // Timeout to prevent infinite loading screen
+  useEffect(() => {
+    if (loading && !session) {
+      const timeout = setTimeout(() => {
+        setShowLoading(false);
+        // Force set loading to false if timeout reached
+        useAuthStore.getState().setLoading(false);
+      }, 2000); // Max 2 seconds loading screen
+
+      return () => clearTimeout(timeout);
+    } else {
+      setShowLoading(false);
     }
-    
-    // No timeout needed if we've had a session before or not in loading state
-    return () => {};
   }, [loading, session]);
 
-  // Show loading state while auth is being checked
-  if (loading && !timeoutOccurred) {
+  // Show loading state ONLY if auth is being checked AND we don't have a session
+  // This should be very brief - SimpleAuthLoader in index.tsx handles fast navigation
+  // Don't block UI for Firebase/notification initialization - those are non-blocking
+  if (loading && !session && showLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" />
@@ -158,30 +201,47 @@ export default Sentry.wrap(function RootLayout() {
   return (
     <SafeAreaProvider>
       <EdgeToEdgeComponent />
+      <CartAnimationProvider>
         <LanguageProvider>
           <ThemeProvider>
             <NotificationProvider>
               <ErrorBoundary>
-              <Stack screenOptions={{ 
-                headerShown: false,
-                headerTitle: "", // Empty title to prevent showing route group names
-              }}>
-                {session ? (
-                  <Stack.Screen 
-                    name="(main)" 
-                    options={{ headerShown: false, title: "" }} 
-                  />
-                ) : (
-                  <Stack.Screen 
-                    name="(auth)" 
-                    options={{ headerShown: false, title: "" }} 
-                  />
-                )}
-              </Stack>
+                <Stack screenOptions={{
+                  headerShown: false,
+                  headerTitle: "", // Empty title to prevent showing route group names
+                  animation: 'none',
+                  header: () => null,
+                  navigationBarHidden: true,
+                  contentStyle: { backgroundColor: 'transparent' },
+                }}>
+                  {session ? (
+                    <Stack.Screen
+                      name="(main)"
+                      options={{
+                        headerShown: false,
+                        title: "",
+                        header: () => null,
+                        navigationBarHidden: true,
+                      }}
+                    />
+                  ) : (
+                    <Stack.Screen
+                      name="(auth)"
+                      options={{
+                        headerShown: false,
+                        title: "",
+                        header: () => null,
+                        navigationBarHidden: true,
+                      }}
+                    />
+                  )}
+                </Stack>
+                <CartAnimationOverlay />
               </ErrorBoundary>
             </NotificationProvider>
           </ThemeProvider>
         </LanguageProvider>
+      </CartAnimationProvider>
     </SafeAreaProvider>
-   );
+  );
 });

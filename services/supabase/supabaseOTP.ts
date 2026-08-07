@@ -1,5 +1,9 @@
 import { supabase } from './supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ServiceError, ErrorCode } from '../errors';
+import { LoggingService } from '../logging/LoggingService';
+
+const logger = LoggingService.createScope('SupabaseOTP');
 
 /**
  * Supabase OTP Service
@@ -28,8 +32,7 @@ interface VerificationResult {
  */
 export const sendOTP = async (phoneNumber: string): Promise<OTPResult> => {
   try {
-    console.log(`Sending OTP via Supabase Auth Hook to ${phoneNumber}`);
-    console.log('Note: OTP will be sent via configured Auth Hook (AuthKey API)');
+    logger.info('Sending OTP via Supabase Auth Hook', { phone: phoneNumber.slice(-4) });
     
     // Format phone number to ensure it has country code
     const formattedPhone = phoneNumber;
@@ -43,33 +46,56 @@ export const sendOTP = async (phoneNumber: string): Promise<OTPResult> => {
     });
     
     if (error) {
-      console.error('Supabase OTP error:', error);
+      logger.warn('Supabase OTP error', { errorMessage: error.message });
       
-      // Provide more specific error messages
+      // Map to specific error codes
       if (error.message.includes('Hook')) {
-        throw new Error('OTP service temporarily unavailable. Please try again.');
+        throw new ServiceError({
+          code: ErrorCode.SERVICE_UNAVAILABLE,
+          message: `OTP hook error: ${error.message}`,
+          userMessage: 'OTP service temporarily unavailable. Please try again.',
+          context: { service: 'supabaseOTP', operation: 'sendOTP' },
+        });
       }
       if (error.message.includes('rate')) {
-        throw new Error('Too many requests. Please wait before requesting another OTP.');
+        throw new ServiceError({
+          code: ErrorCode.AUTH_RATE_LIMITED,
+          message: `Rate limited: ${error.message}`,
+          userMessage: 'Too many requests. Please wait before requesting another OTP.',
+          context: { service: 'supabaseOTP', operation: 'sendOTP' },
+        });
       }
       if (error.message.includes('phone')) {
-        throw new Error('Invalid phone number format. Please check and try again.');
+        throw new ServiceError({
+          code: ErrorCode.DATA_VALIDATION_FAILED,
+          message: `Invalid phone: ${error.message}`,
+          userMessage: 'Invalid phone number format. Please check and try again.',
+          context: { service: 'supabaseOTP', operation: 'sendOTP' },
+        });
       }
       
-      throw new Error(error.message || 'Failed to send verification code');
+      throw new ServiceError({
+        code: ErrorCode.NETWORK_REQUEST_FAILED,
+        message: error.message || 'Failed to send verification code',
+        context: { service: 'supabaseOTP', operation: 'sendOTP' },
+      });
     }
     
-    console.log('OTP sent successfully via Supabase Auth Hook');
+    logger.info('OTP sent successfully');
     
     return {
       success: true,
       message: 'OTP sent successfully'
     };
-  } catch (error: any) {
-    console.error('Error sending OTP:', error);
+  } catch (error: unknown) {
+    const serviceError = ServiceError.fromUnknown(error, {
+      code: ErrorCode.NETWORK_REQUEST_FAILED,
+      context: { service: 'supabaseOTP', operation: 'sendOTP' },
+    });
+    
     return {
       success: false,
-      error: error.message || 'Failed to send verification code'
+      error: serviceError.userMessage
     };
   }
 };
@@ -81,14 +107,19 @@ export const sendOTP = async (phoneNumber: string): Promise<OTPResult> => {
  */
 export const verifyOTP = async (phoneNumber: string, code: string): Promise<VerificationResult> => {
   try {
-    console.log('Verifying OTP via Supabase for phone:', phoneNumber);
+    logger.info('Verifying OTP via Supabase', { phone: phoneNumber?.slice(-4) });
     
     // Get the stored phone number if not provided
     const storedPhone = await AsyncStorage.getItem('auth_phone_number');
     const phoneToVerify = phoneNumber || storedPhone;
     
     if (!phoneToVerify) {
-      throw new Error('Phone number not found. Please restart the verification process.');
+      throw new ServiceError({
+        code: ErrorCode.DATA_NOT_FOUND,
+        message: 'Phone number not found in storage',
+        userMessage: 'Phone number not found. Please restart the verification process.',
+        context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+      });
     }
     
     // Verify OTP with Supabase
@@ -99,27 +130,51 @@ export const verifyOTP = async (phoneNumber: string, code: string): Promise<Veri
     });
     
     if (error) {
-      console.error('Supabase OTP verification error:', error);
+      logger.warn('Supabase OTP verification error', { errorMessage: error.message });
       
-      // Provide more specific error messages
+      // Map to specific error codes
       if (error.message.includes('expired')) {
-        throw new Error('OTP has expired. Please request a new code.');
+        throw new ServiceError({
+          code: ErrorCode.AUTH_OTP_EXPIRED,
+          message: `OTP expired: ${error.message}`,
+          userMessage: 'OTP has expired. Please request a new code.',
+          context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+        });
       }
       if (error.message.includes('invalid')) {
-        throw new Error('Invalid verification code. Please check and try again.');
+        throw new ServiceError({
+          code: ErrorCode.AUTH_OTP_INVALID,
+          message: `Invalid OTP: ${error.message}`,
+          userMessage: 'Invalid verification code. Please check and try again.',
+          context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+        });
       }
       if (error.message.includes('attempts')) {
-        throw new Error('Too many failed attempts. Please request a new code.');
+        throw new ServiceError({
+          code: ErrorCode.AUTH_RATE_LIMITED,
+          message: `Too many attempts: ${error.message}`,
+          userMessage: 'Too many failed attempts. Please request a new code.',
+          context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+        });
       }
       
-      throw new Error(error.message || 'Failed to verify code');
+      throw new ServiceError({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: error.message || 'Failed to verify code',
+        context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+      });
     }
     
     if (!data.user || !data.session) {
-      throw new Error('Verification failed. Please try again.');
+      throw new ServiceError({
+        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+        message: 'Verification returned no user or session',
+        userMessage: 'Verification failed. Please try again.',
+        context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+      });
     }
     
-    console.log('OTP verification successful:', data.user.id);
+    logger.info('OTP verification successful', { userId: data.user.id });
     
     // Store user ID in AsyncStorage for compatibility
     await AsyncStorage.setItem('userId', data.user.id);
@@ -131,9 +186,16 @@ export const verifyOTP = async (phoneNumber: string, code: string): Promise<Veri
       user: data.user,
       session: data.session
     };
-  } catch (error: any) {
-    console.error('Error verifying OTP:', error);
-    throw error;
+  } catch (error: unknown) {
+    // Re-throw ServiceErrors as-is
+    if (ServiceError.isServiceError(error)) {
+      throw error;
+    }
+    
+    throw ServiceError.fromUnknown(error, {
+      code: ErrorCode.AUTH_INVALID_CREDENTIALS,
+      context: { service: 'supabaseOTP', operation: 'verifyOTP' },
+    });
   }
 };
 
@@ -148,11 +210,15 @@ export const resendOTP = async (phoneNumber?: string): Promise<OTPResult> => {
     const phoneToResend = phoneNumber || storedPhone;
     
     if (!phoneToResend) {
-      throw new Error('Phone number not found. Please restart the verification process.');
+      throw new ServiceError({
+        code: ErrorCode.DATA_NOT_FOUND,
+        message: 'Phone number not found in storage for resend',
+        userMessage: 'Phone number not found. Please restart the verification process.',
+        context: { service: 'supabaseOTP', operation: 'resendOTP' },
+      });
     }
     
-    console.log(`Resending OTP via Supabase Auth Hook to: ${phoneToResend}`);
-    console.log('Note: OTP will be sent via configured Auth Hook (AuthKey API)');
+    logger.info('Resending OTP via Supabase Auth Hook', { phone: phoneToResend.slice(-4) });
     
     // Resend OTP using Supabase (will trigger Auth Hook to AuthKey API)
     const { error } = await supabase.auth.signInWithOtp({
@@ -160,30 +226,48 @@ export const resendOTP = async (phoneNumber?: string): Promise<OTPResult> => {
     });
     
     if (error) {
-      console.error('Supabase OTP resend error:', error);
+      logger.warn('Supabase OTP resend error', { errorMessage: error.message });
       
-      // Provide more specific error messages
+      // Map to specific error codes
       if (error.message.includes('Hook')) {
-        throw new Error('OTP service temporarily unavailable. Please try again.');
+        throw new ServiceError({
+          code: ErrorCode.SERVICE_UNAVAILABLE,
+          message: `OTP hook error on resend: ${error.message}`,
+          userMessage: 'OTP service temporarily unavailable. Please try again.',
+          context: { service: 'supabaseOTP', operation: 'resendOTP' },
+        });
       }
       if (error.message.includes('rate')) {
-        throw new Error('Too many requests. Please wait before requesting another OTP.');
+        throw new ServiceError({
+          code: ErrorCode.AUTH_RATE_LIMITED,
+          message: `Rate limited on resend: ${error.message}`,
+          userMessage: 'Too many requests. Please wait before requesting another OTP.',
+          context: { service: 'supabaseOTP', operation: 'resendOTP' },
+        });
       }
       
-      throw new Error(error.message || 'Failed to resend verification code');
+      throw new ServiceError({
+        code: ErrorCode.NETWORK_REQUEST_FAILED,
+        message: error.message || 'Failed to resend verification code',
+        context: { service: 'supabaseOTP', operation: 'resendOTP' },
+      });
     }
     
-    console.log('OTP resent successfully via Supabase Auth Hook');
+    logger.info('OTP resent successfully');
     
     return {
       success: true,
       message: 'OTP resent successfully'
     };
-  } catch (error: any) {
-    console.error('Error resending OTP:', error);
+  } catch (error: unknown) {
+    const serviceError = ServiceError.fromUnknown(error, {
+      code: ErrorCode.NETWORK_REQUEST_FAILED,
+      context: { service: 'supabaseOTP', operation: 'resendOTP' },
+    });
+    
     return {
       success: false,
-      error: error.message || 'Failed to resend verification code'
+      error: serviceError.userMessage
     };
   }
 };
@@ -200,10 +284,12 @@ export const signOut = async (): Promise<void> => {
     await AsyncStorage.removeItem('auth_phone_number');
     await AsyncStorage.removeItem('verificationId'); // Clean up any Firebase remnants
     
-    console.log('User signed out successfully');
+    logger.info('User signed out successfully');
   } catch (error) {
-    console.error('Error signing out:', error);
-    throw error;
+    throw ServiceError.fromUnknown(error, {
+      code: ErrorCode.AUTH_NOT_AUTHENTICATED,
+      context: { service: 'supabaseOTP', operation: 'signOut' },
+    });
   }
 };
 
@@ -212,7 +298,7 @@ export const signOut = async (): Promise<void> => {
  */
 export const getCurrentUser = () => {
   const { data: { user } } = supabase.auth.getUser();
-  console.log('Current user:', user ? user.id : 'No user signed in');
+  logger.debug('Current user check', { hasUser: !!user });
   return user;
 };
 

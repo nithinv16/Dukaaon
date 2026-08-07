@@ -34,7 +34,7 @@ export default function DeliveriesList() {
   const user = useAuthStore(state => state.user);
   const { currentLanguage } = useLanguage();
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start false - will be true only when actually fetching
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
@@ -50,8 +50,15 @@ export default function DeliveriesList() {
   });
 
   useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID
+    if (!user?.id) {
+      console.log('DeliveriesList: Waiting for user ID...');
+      setLoading(false); // Ensure not stuck in loading state
+      return;
+    }
+    console.log('DeliveriesList: Fetching deliveries for user:', user.id);
     fetchDeliveries();
-  }, [statusFilter]);
+  }, [statusFilter, user?.id]);
 
   const fetchDeliveries = async () => {
     setLoading(true);
@@ -146,14 +153,14 @@ export default function DeliveriesList() {
         .eq('id', deliveryId);
 
       if (error) throw error;
-      
+
       // Update the local state to reflect the change
-      setDeliveries(deliveries.map(delivery => 
-        delivery.id === deliveryId 
-          ? { ...delivery, delivery_status: 'cancelled' } 
+      setDeliveries(deliveries.map(delivery =>
+        delivery.id === deliveryId
+          ? { ...delivery, delivery_status: 'cancelled' }
           : delivery
       ));
-      
+
     } catch (error) {
       console.error('Error cancelling delivery:', error);
       Alert.alert(translations.error, translations.failedToCancelDelivery);
@@ -166,8 +173,8 @@ export default function DeliveriesList() {
       translations.cancelDeliveryConfirm,
       [
         { text: translations.no, style: 'cancel' },
-        { 
-          text: translations.yes, 
+        {
+          text: translations.yes,
           style: 'destructive',
           onPress: () => handleCancelDelivery(deliveryId)
         }
@@ -178,16 +185,16 @@ export default function DeliveriesList() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
-          icon="arrow-left" 
+        <IconButton
+          icon="arrow-left"
           iconColor={WHOLESALER_COLORS.background}
           size={24}
-          onPress={() => router.back()} 
+          onPress={() => router.back()}
         />
         <Text variant="titleLarge" style={[styles.headerTitle, { color: WHOLESALER_COLORS.background }]}>
           Deliveries
         </Text>
-        <IconButton 
+        <IconButton
           icon="plus"
           iconColor={WHOLESALER_COLORS.background}
           size={24}
@@ -218,8 +225,8 @@ export default function DeliveriesList() {
       ) : filteredDeliveries.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>No deliveries found</Text>
-          <Button 
-            mode="contained" 
+          <Button
+            mode="contained"
             onPress={() => router.push('/(main)/wholesaler/delivery/book')}
             style={styles.bookButton}
           >

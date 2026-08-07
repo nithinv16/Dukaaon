@@ -98,6 +98,20 @@ The application includes comprehensive monitoring:
 - Usage analytics (Google Analytics)
 - System status monitoring
 
+## Documentation
+Comprehensive documentation is available in the `/docs` directory:
+
+- **[Documentation Index](docs/INDEX.md)** - Complete documentation overview
+- **[Architecture](docs/architecture/)** - System architecture and design documents
+- **[Guides](docs/guides/)** - Setup and implementation guides
+- **[Troubleshooting](docs/troubleshooting/)** - Common issues and solutions
+- **[Archive](docs/archive/)** - Historical documentation and completed fixes
+
+For quick access:
+- Setup instructions: See `/docs/guides/`
+- Troubleshooting: See `/docs/troubleshooting/`
+- Architecture info: See `/docs/architecture/`
+
 ## Contributing
 1. Fork the repository
 2. Create your feature branch

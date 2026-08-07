@@ -1,8 +1,8 @@
-export type PaymentMethodType = 'upi' | 'card' | 'netbanking' | 'cod';
+export type PaymentMethodType = 'upi' | 'card' | 'netbanking' | 'cod' | 'razorpay';
 
 export interface PaymentMethod {
   id: string;
-  type: 'upi' | 'card' | 'netbanking' | 'cod';
+  type: 'upi' | 'card' | 'netbanking' | 'cod' | 'razorpay';
   title: string;
   is_default: boolean;
   details: {
@@ -11,6 +11,7 @@ export interface PaymentMethod {
     card_brand?: string;
     card_expiry?: string;
     bank_name?: string;
+    gateway?: string; // For payment gateways like 'razorpay'
   };
   user_id: string;
   created_at: string;

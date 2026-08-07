@@ -1,0 +1,117 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    ext {
+        buildToolsVersion = findProperty('android.buildToolsVersion') ?: '35.0.0'
+        minSdkVersion = Integer.parseInt(findProperty('android.minSdkVersion') ?: '24')
+        compileSdkVersion = Integer.parseInt(findProperty('android.compileSdkVersion') ?: '35')
+        targetSdkVersion = Integer.parseInt(findProperty('android.targetSdkVersion') ?: '35')
+        kotlinVersion = findProperty('android.kotlinVersion') ?: '2.0.21'
+
+        // NDK 26.1 - Reverted due to build issues with NDK 27.
+        // Using linker flags for 16KB alignment support.
+        ndkVersion = "26.1.10909125"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.google.gms:google-services:4.4.1'
+        classpath("com.android.tools.build:gradle:8.8.2")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+    }
+}
+
+// Global configuration to force 16KB alignment for all native modules (NDK 26 workaround)
+allprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            project.android {
+                if (it.hasProperty("defaultConfig")) {
+                    it.defaultConfig {
+                        externalNativeBuild {
+                            cmake {
+                                // Force 16KB page alignment for NDK 26
+                                arguments "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Global configuration to force 16KB alignment for all native modules
+// Removed due to build conflicts with Expo modules. 
+// Expo SDK 53+ modules should explicitly handle alignment when NDK 27 is used.
+
+apply plugin: "com.facebook.react.rootproject"
+
+// Prevent autolinking from applying library plugin to app module
+allprojects { project ->
+    if (project.name == 'app') {
+        project.beforeEvaluate {
+            // Intercept plugin applications before autolinking runs
+            def pluginContainer = project.plugins
+            def originalApply = pluginContainer.&apply
+            pluginContainer.metaClass.apply = { String pluginId ->
+                if (pluginId == 'com.android.library' || pluginId == 'com.android.internal.library') {
+                    println "⚠️  BLOCKED at root level: Skipping library plugin '${pluginId}' for app module"
+                    return null
+                }
+                try {
+                    return originalApply(pluginId)
+                } catch (Exception e) {
+                    // If plugin is library and app, ignore the error
+                    if ((pluginId == 'com.android.library' || pluginId == 'com.android.internal.library') && 
+                        e.message?.contains('com.android.application')) {
+                        println "⚠️  Ignored library plugin conflict for app module"
+                        return null
+                    }
+                    throw e
+                }
+            }
+        }
+    }
+}
+
+allprojects {
+    repositories {
+        maven {
+            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+            url(new File(['node', '--print', "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim(), '../android'))
+        }
+        maven {
+            // Android JSC is installed from npm
+            url(new File(['node', '--print', "require.resolve('jsc-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), '../dist'))
+        }
+
+        google()
+        mavenCentral()
+        maven { url 'https://www.jitpack.io' }
+    }
+    
+    // Exclude old support libraries globally across all projects
+    configurations.all {
+        exclude group: 'com.android.support', module: 'support-compat'
+        exclude group: 'com.android.support', module: 'support-v4'
+        exclude group: 'com.android.support', module: 'versionedparcelable'
+        exclude group: 'com.android.support', module: 'animated-vector-drawable'
+        exclude group: 'com.android.support', module: 'support-vector-drawable'
+        exclude group: 'com.android.support'
+        
+        resolutionStrategy {
+            eachDependency { DependencyResolveDetails details ->
+                if (details.requested.group == 'com.android.support') {
+                    if (details.requested.name == 'support-compat') {
+                        details.useTarget 'androidx.core:core:1.16.0'
+                    } else if (details.requested.name == 'versionedparcelable') {
+                        details.useTarget 'androidx.versionedparcelable:versionedparcelable:1.1.1'
+                    }
+                }
+            }
+        }
+    }
+}

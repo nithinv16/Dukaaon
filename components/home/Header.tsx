@@ -36,14 +36,14 @@ interface CategoryMapping {
 
 export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSearchResult }: HeaderProps) {
   const router = useRouter();
-  
+
   // Use the centralized location store instead of local state
   const { userLocation, locationAddress, isLocationLoading, getCurrentLocation } = useLocationStore();
   const { currentLanguage } = useLanguage();
-  
+
   // Get loading state from auth store
   const { loading: authLoading } = useAuthStore();
-  
+
   const [searchQuery, setSearchQuery] = useState('');
   const cartItems = useCartStore(state => state.items);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -53,10 +53,16 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
 
   // Translation state
   const originalTexts = {
-    searchPlaceholder: "Search products, brands, categories..."
+    searchPlaceholder: "Search products, brands, categories...",
+    detectingLocation: "Detecting location...",
+    locationDetected: "Location detected",
+    loading: "Loading...",
+    shopName: "Shop Name",
   };
-  
+
   const [translations, setTranslations] = useState(originalTexts);
+  const [translatedLocationAddress, setTranslatedLocationAddress] = useState<string | null>(null);
+  const [translatedShopName, setTranslatedShopName] = useState<string | null>(null);
 
   // Load business details if not available
   useEffect(() => {
@@ -69,7 +75,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
             .select('business_details, profile_image_url')
             .eq('id', user.id)
             .single();
-          
+
           if (!error && data) {
             // Update the user in auth store with business details
             const updatedUser = { ...user, ...data };
@@ -126,7 +132,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
     try {
       // Use the optimized location store method
       await getCurrentLocation();
-      
+
       // Fetch nearby wholesalers if location is available
       if (userLocation) {
         await fetchNearbyWholesalers(userLocation.latitude, userLocation.longitude);
@@ -160,30 +166,106 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
     }
   }, []);
 
-  // Load translations when language changes
+  // Load translations when language changes (non-blocking, cache-first)
   useEffect(() => {
-    const loadTranslations = async () => {
-      if (currentLanguage === 'en') {
-        setTranslations(originalTexts);
-        return;
+    if (currentLanguage === 'en') {
+      setTranslations(originalTexts);
+      return;
+    }
+
+    // Translate all UI texts
+    const translateAllTexts = async () => {
+      const translatedTexts: typeof originalTexts = { ...originalTexts };
+
+      for (const [key, value] of Object.entries(originalTexts)) {
+        // Check cache first
+        const cached = translationService.getCachedTranslationSync(value, currentLanguage);
+        if (cached) {
+          translatedTexts[key as keyof typeof originalTexts] = cached;
+        } else {
+          // Translate in background
+          try {
+            const result = await translationService.translateText(value, currentLanguage);
+            if (result?.translatedText) {
+              translatedTexts[key as keyof typeof originalTexts] = result.translatedText;
+            }
+          } catch (e) {
+            // Keep original on error
+          }
+        }
       }
 
-      try {
-        const translatedTexts = await Promise.all([
-          translationService.translateText(originalTexts.searchPlaceholder, currentLanguage)
-        ]);
-
-        setTranslations({
-          searchPlaceholder: translatedTexts[0]?.translatedText || originalTexts.searchPlaceholder
-        });
-      } catch (error) {
-        console.error('Error loading translations:', error);
-        setTranslations(originalTexts);
-      }
+      setTranslations(translatedTexts);
     };
 
-    loadTranslations();
+    translateAllTexts();
   }, [currentLanguage]);
+
+  // Translate location address when it changes or language changes
+  useEffect(() => {
+    if (!locationAddress) {
+      setTranslatedLocationAddress(null);
+      return;
+    }
+
+    if (currentLanguage === 'en') {
+      setTranslatedLocationAddress(locationAddress);
+      return;
+    }
+
+    // Check cache first for instant display
+    const cached = translationService.getCachedTranslationSync(locationAddress, currentLanguage);
+    if (cached) {
+      setTranslatedLocationAddress(cached);
+    } else {
+      setTranslatedLocationAddress(locationAddress); // Show original while translating
+    }
+
+    // Translate in background
+    translationService.translateText(locationAddress, currentLanguage)
+      .then(result => {
+        if (result?.translatedText) {
+          setTranslatedLocationAddress(result.translatedText);
+        }
+      })
+      .catch(() => {
+        // Keep original on error
+      });
+  }, [locationAddress, currentLanguage]);
+
+  // Translate shop/business name when language changes or user data changes
+  useEffect(() => {
+    const shopName = user?.business_details?.shopName || user?.displayName;
+
+    if (!shopName) {
+      setTranslatedShopName(null);
+      return;
+    }
+
+    if (currentLanguage === 'en') {
+      setTranslatedShopName(shopName);
+      return;
+    }
+
+    // Check cache first for instant display
+    const cached = translationService.getCachedTranslationSync(shopName, currentLanguage);
+    if (cached) {
+      setTranslatedShopName(cached);
+    } else {
+      setTranslatedShopName(shopName); // Show original while translating
+    }
+
+    // Translate in background
+    translationService.translateText(shopName, currentLanguage)
+      .then(result => {
+        if (result?.translatedText) {
+          setTranslatedShopName(result.translatedText);
+        }
+      })
+      .catch(() => {
+        // Keep original on error
+      });
+  }, [user?.business_details?.shopName, user?.displayName, currentLanguage]);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -191,7 +273,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
     try {
       const searchTerms = searchQuery.toLowerCase().split(' ');
       let results: SearchResult[] = [];
-      
+
       // Check category mappings
       for (const term of searchTerms) {
         const categoryPath = categoryMappings[term];
@@ -219,7 +301,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
       const { data: productResults, error: productError } = await supabase
         .from('products')
         .select('id, name, category, description')
-        .or(searchTerms.map(term => 
+        .or(searchTerms.map(term =>
           `name.ilike.%${term}%,category.ilike.%${term}%,description.ilike.%${term}%`
         ).join(','));
 
@@ -279,17 +361,31 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
   }, [user?.id, user?.profile_image_url]);
 
   // Also refresh avatar when component mounts or user changes
+  // OPTIMIZED: Skip fetch if avatar already set and user hasn't changed
+  const lastUserIdRef = useRef<string | null>(null);
   useEffect(() => {
     const refreshAvatar = () => {
-      if (user?.id) {
-        console.log('Refreshing avatar on component mount/user change');
-        console.log('User object:', user);
-        fetchUserAvatar();
+      if (!user?.id) return;
+
+      // Skip if same user and avatar already set
+      if (lastUserIdRef.current === user.id && avatarUrl) {
+        return;
       }
+
+      lastUserIdRef.current = user.id;
+
+      // Check user object first - no need to fetch if already available
+      if (user?.profile_image_url) {
+        setAvatarUrl(user.profile_image_url);
+        return;
+      }
+
+      // Only fetch if avatar not in user object
+      fetchUserAvatar();
     };
-    
+
     refreshAvatar();
-  }, [user]);
+  }, [user?.id]); // Only depend on user ID, not entire user object
 
   // Set up real-time subscription for profile updates
   useEffect(() => {
@@ -318,42 +414,41 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
       subscription.unsubscribe();
     };
   }, [user?.id]);
-  
+
   const fetchUserAvatar = async () => {
     try {
-      console.log('Fetching avatar for user ID:', user?.id);
-      
+      if (!user?.id) return;
+
       // First check if user object already has profile_image_url
       if (user?.profile_image_url) {
-        console.log('Found profile_image_url in user object:', user.profile_image_url);
         setAvatarUrl(user.profile_image_url);
         return;
       }
-      
-      // If not in user object, fetch from database
+
+      // If not in user object, fetch from database (only log in dev mode)
       const { data, error } = await supabase
         .from('profiles')
         .select('profile_image_url')
-        .eq('id', user?.id)
+        .eq('id', user.id)
         .single();
-        
+
       if (error) {
-        console.error('Error fetching avatar from database:', error);
+        if (__DEV__) {
+          console.error('Error fetching avatar from database:', error);
+        }
         setAvatarUrl(null);
         return;
       }
-      
-      console.log('Avatar data received from database:', data);
-      
+
       if (data?.profile_image_url) {
-        console.log('Setting avatar URL from database:', data.profile_image_url);
         setAvatarUrl(data.profile_image_url);
       } else {
-        console.log('No profile_image_url found in database, using default avatar');
         setAvatarUrl(null);
       }
     } catch (error) {
-      console.error('Error fetching avatar:', error);
+      if (__DEV__) {
+        console.error('Error fetching avatar:', error);
+      }
       setAvatarUrl(null);
     }
   };
@@ -363,9 +458,9 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
       <View style={styles.container}>
         <View style={styles.topRow}>
           <View style={styles.profile}>
-            <Avatar.Image 
-              size={40} 
-              source={avatarUrl ? { uri: avatarUrl } : require('../../assets/images/avatar.png')} 
+            <Avatar.Image
+              size={40}
+              source={avatarUrl ? { uri: avatarUrl } : require('../../assets/images/avatar.png')}
               onPress={() => {
                 console.log('Avatar pressed, current avatarUrl:', avatarUrl);
                 fetchUserAvatar(); // Refresh avatar on press
@@ -374,36 +469,34 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
               style={styles.avatar}
             />
             <View style={styles.userInfo}>
-              <PaperText 
-                variant="titleMedium" 
+              <PaperText
+                variant="titleMedium"
                 style={(!user || (!user.business_details?.shopName && (authLoading || isLoadingBusinessDetails))) ? [styles.name, styles.loadingText] : styles.name}
               >
-                {!user 
-                  ? 'Loading...'
-                  : user.business_details?.shopName 
-                    ? user.business_details.shopName
-                    : (authLoading || isLoadingBusinessDetails)
-                      ? 'Loading...'
-                      : (user.displayName || 'Shop Name')
+                {!user
+                  ? translations.loading
+                  : (authLoading || isLoadingBusinessDetails)
+                    ? translations.loading
+                    : translatedShopName || translations.shopName
                 }
               </PaperText>
               <View style={styles.locationContainer}>
-                <IconButton 
-                  icon="map-marker" 
+                <IconButton
+                  icon="map-marker"
                   size={16}
                   onPress={requestLocationPermission}
                   loading={isLocationLoading}
                   style={styles.locationIcon}
                 />
                 <PaperText variant="bodySmall" style={styles.address}>
-                  {locationAddress || "Detecting location..."}
+                  {translatedLocationAddress || translations.detectingLocation}
                 </PaperText>
               </View>
             </View>
           </View>
           <View style={styles.cartContainer}>
-            <IconButton 
-              icon="cart" 
+            <IconButton
+              icon="cart"
               size={24}
               onPress={handleCartPress}
             />
@@ -431,7 +524,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
           <View style={styles.searchButtonsContainer}>
             <View style={styles.voiceSearchButton}>
               <EnhancedVoiceSearch
-                onSearchResult={onVoiceSearchResult || (() => {})}
+                onSearchResult={onVoiceSearchResult || (() => { })}
                 onOrderResult={onVoiceOrderResult}
                 placeholder="Voice"
                 compact={true}
@@ -439,7 +532,7 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
             </View>
             <View style={styles.ocrScanButton}>
               <OCRScanner
-                onSearchResult={onOCRSearchResult || (() => {})}
+                onSearchResult={onOCRSearchResult || (() => { })}
                 buttonText="Scan"
                 showModal={true}
                 compact={true}
@@ -456,14 +549,16 @@ export function Header({ user, onVoiceSearchResult, onVoiceOrderResult, onOCRSea
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
-    backgroundColor: '#fff',
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    backgroundColor: 'transparent',
   },
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   profile: {
     flexDirection: 'row',
@@ -472,24 +567,36 @@ const styles = StyleSheet.create({
   },
   userInfo: {
     flex: 1,
-    marginLeft: 8,
+    marginLeft: 12,
   },
   name: {
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 18,
+    color: '#1A1A1A',
+    letterSpacing: -0.5,
   },
   locationContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 2,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
   },
   locationIcon: {
     margin: 0,
     padding: 0,
-    marginLeft: -8, // Adjust to align with name
+    width: 16,
+    height: 16,
   },
   address: {
     flex: 1,
-    opacity: 0.7,
+    fontSize: 12,
+    opacity: 0.8,
+    color: '#333',
+    marginLeft: 4,
   },
   cartContainer: {
     position: 'relative',
@@ -499,53 +606,80 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -4,
-    backgroundColor: '#2196F3',
+    backgroundColor: '#FF7D00',
+    fontWeight: 'bold',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   searchBar: {
     flex: 1,
-    elevation: 0,
+    elevation: 4, // Soft shadow
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    height: 48,
+    borderColor: 'rgba(255,255,255,0.8)',
+    height: 50,
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 16,
   },
   searchInput: {
-    fontSize: 14,
-    paddingHorizontal: 2,
+    fontSize: 15,
+    paddingHorizontal: 0,
     paddingVertical: 0,
     textAlign: 'left',
     textAlignVertical: 'center',
     lineHeight: 20,
-    height: 40,
+    height: 50,
+    minHeight: 50, // Fix for some android versions
+    color: '#333',
   },
   searchContent: {
     justifyContent: 'center',
     alignItems: 'center',
+    height: 50,
   },
   searchButtonsContainer: {
     flexDirection: 'row',
     gap: 8,
   },
   voiceSearchButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
+    backgroundColor: '#fff',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   ocrScanButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
+    backgroundColor: '#fff',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   avatar: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: '#fff',
+    elevation: 2,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   loadingText: {
     opacity: 0.6,

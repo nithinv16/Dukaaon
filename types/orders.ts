@@ -1,4 +1,4 @@
-export type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+export type OrderStatus = 'pending' | 'placed' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 
 export interface OrderItem {
   id: string;
@@ -21,6 +21,7 @@ export interface Order {
   delivery_fee?: number; // Optional delivery fee for individual orders
   status: OrderStatus;
   payment_status: 'pending' | 'completed' | 'failed';
+  payment_method?: string;
   created_at: string;
   updated_at: string;
   delivery_address: string;

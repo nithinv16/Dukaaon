@@ -5,6 +5,7 @@ import { PaymentMethodType } from '../../types/payment';
 
 import { useAuthStore } from '../../store/auth';
 import { useRouter } from 'expo-router';
+import { razorpayService } from '../../services/payment/razorpayService';
 
 interface PaymentProcessorProps {
   amount: number;
@@ -13,9 +14,15 @@ interface PaymentProcessorProps {
   paymentDetails: {
     upi_id?: string;
     card_last4?: string;
+    preferred_upi_app?: string; // Preferred UPI app ID
   };
-  onSuccess: () => void;
+  onSuccess: (paymentData: {
+    razorpay_payment_id: string;
+    razorpay_order_id: string;
+    razorpay_signature: string;
+  }) => void;
   onFailure: (error: string) => void;
+  forceUpi?: boolean; // If true, pre-select UPI method to show UPI apps directly
 }
 
 export function PaymentProcessor({
@@ -25,26 +32,72 @@ export function PaymentProcessor({
   paymentDetails,
   onSuccess,
   onFailure,
+  forceUpi = false,
 }: PaymentProcessorProps) {
   const [status, setStatus] = useState<'processing' | 'success' | 'failed'>('processing');
   const [retryCount, setRetryCount] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const user = useAuthStore(state => state.user);
   const router = useRouter();
 
+  // Auto-trigger payment when component mounts
+  useEffect(() => {
+    if (status === 'processing') {
+      processPayment();
+    }
+  }, []);
+
   const processPayment = async () => {
     try {
+      // For Razorpay, use the Razorpay service
+      // For other payment methods (upi, card, netbanking), also route through Razorpay
+      // since Razorpay supports all these payment methods
+      const actualPaymentMethod = paymentMethod === 'razorpay' 
+        ? 'upi' // Default to UPI for Razorpay, user can choose in Razorpay UI
+        : paymentMethod;
+
+      // Format phone number for Razorpay (requires +91 prefix)
+      // User's phone_number is stored without prefix, so add +91 if missing
+      let formattedContact = '';
+      if (user?.phone_number) {
+        const phone = user.phone_number.trim();
+        // If phone doesn't start with +91, add it
+        if (phone.startsWith('+91')) {
+          formattedContact = phone;
+        } else if (phone.startsWith('91') && phone.length === 12) {
+          // If it starts with 91 but no +, add +
+          formattedContact = '+' + phone;
+        } else if (phone.length === 10) {
+          // If it's a 10-digit number, add +91 prefix
+          formattedContact = '+91' + phone;
+        } else {
+          // Use as-is if it's already formatted or doesn't match expected patterns
+          formattedContact = phone.startsWith('+') ? phone : '+91' + phone;
+        }
+      }
+
+      // CRITICAL: Razorpay requires contact (mobile number) for UPI payments
+      // If contact is missing, Razorpay will prompt user to enter it manually
+      if (!formattedContact) {
+        console.warn('[PaymentProcessor] Warning: No phone number found for user. Razorpay will prompt for mobile number.');
+      }
+
       const response = await razorpayService.initializePayment({
         amount,
         orderId,
-        paymentMethod,
+        paymentMethod: actualPaymentMethod,
         userDetails: {
-          name: user?.full_name || '',
+          // Get name from business_details.ownerName or business_details.shopName, or use empty string
+          name: user?.business_details?.ownerName || 
+                user?.business_details?.shopName || 
+                '',
           email: user?.email || '',
-          contact: user?.phone || '',
+          contact: formattedContact, // Use formatted phone number with +91 prefix
         },
+        forceUpi: forceUpi || paymentDetails.preferred_upi_app !== undefined, // Force UPI if explicitly requested or preferred app is set
       });
 
-      // Verify payment
+      // Verify payment (client-side check - server verification should be done in onSuccess)
       const isVerified = await razorpayService.verifyPayment(
         response.razorpay_payment_id,
         response.razorpay_order_id,
@@ -53,14 +106,59 @@ export function PaymentProcessor({
 
       if (isVerified) {
         setStatus('success');
-        onSuccess();
+        // Small delay to show success state before calling onSuccess
+        // Pass payment details to onSuccess for database update
+        setTimeout(() => {
+          onSuccess({
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_signature: response.razorpay_signature,
+          });
+        }, 1500);
       } else {
         throw new Error('Payment verification failed');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Payment processing error:', error);
+      
+      // Extract user-friendly error message
+      let errorMsg = 'Payment processing failed';
+      
+      if (error?.message) {
+        errorMsg = error.message;
+      } else if (error?.error?.description) {
+        errorMsg = error.error.description;
+      } else if (error?.description) {
+        // Try to parse JSON string if description is a JSON string
+        try {
+          const parsedDesc = JSON.parse(error.description);
+          if (parsedDesc.error?.description) {
+            errorMsg = parsedDesc.error.description;
+          }
+        } catch {
+          errorMsg = error.description;
+        }
+      }
+      
+      // Handle payment cancellation gracefully (not a real error)
+      // Cancellation should not update database - user can retry
+      const isCancelled = errorMsg.toLowerCase().includes('cancelled') || 
+                         errorMsg.toLowerCase().includes('cancel') ||
+                         error?.code === 'PAYMENT_CANCELLED' ||
+                         error?.error?.reason === 'payment_cancelled';
+      
+      if (isCancelled) {
+        errorMsg = 'Payment was cancelled. You can try again when ready.';
+        setErrorMessage(errorMsg);
+        setStatus('failed');
+        // For cancellation, pass a special flag so we don't update database
+        onFailure('CANCELLED: ' + errorMsg);
+        return;
+      }
+      
+      setErrorMessage(errorMsg);
       setStatus('failed');
-      onFailure('Payment processing failed');
+      onFailure(errorMsg);
     }
   };
 
@@ -74,11 +172,21 @@ export function PaymentProcessor({
         </>
       )}
 
+      {status === 'success' && (
+        <>
+          <Text style={styles.successText}>Payment Successful!</Text>
+          <Text style={styles.successSubtext}>
+            Your payment has been processed successfully
+          </Text>
+          <ActivityIndicator size="small" style={{ marginTop: 16 }} />
+        </>
+      )}
+
       {status === 'failed' && (
         <>
           <Text style={styles.errorText}>Payment Failed</Text>
           <Text style={styles.errorSubtext}>
-            Please try again or choose a different payment method
+            {errorMessage || 'Please try again or choose a different payment method'}
           </Text>
           <View style={styles.buttonGroup}>
             <Button 
@@ -90,7 +198,11 @@ export function PaymentProcessor({
             </Button>
             <Button 
               mode="contained"
-              onPress={processPayment}
+              onPress={() => {
+                setStatus('processing');
+                setErrorMessage('');
+                processPayment();
+              }}
               style={styles.button}
             >
               Retry
@@ -136,5 +248,17 @@ const styles = StyleSheet.create({
   },
   button: {
     minWidth: 140,
+  },
+  successText: {
+    color: '#4caf50',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  successSubtext: {
+    color: '#666',
+    textAlign: 'center',
+    fontSize: 14,
   },
 }); 

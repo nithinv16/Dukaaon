@@ -1,0 +1,98 @@
+diff --git a/node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle b/node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle
+index 98c404e..c13dbee 100644
+--- a/node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle
++++ b/node_modules/expo-modules-autolinking/scripts/android/autolinking_implementation.gradle
+@@ -324,13 +324,91 @@ if (rootProject instanceof ProjectDescriptor) {
+ 
+     // Apply plugins for all app projects
+     gradle.afterProject { project ->
+-      if (!project.plugins.hasPlugin('com.android.application')) {
++      // CRITICAL FIX: Only apply plugins to projects that have application plugin
++      // BUT skip library plugins for app module to prevent conflicts
++      // Check both hasPlugin and project name since hasPlugin might not detect plugins applied via 'apply plugin:'
++      def hasApplicationPlugin = project.plugins.hasPlugin('com.android.application') || 
++                                project.plugins.hasPlugin('com.android.internal.application') ||
++                                project.name == 'app'
++      
++      if (!hasApplicationPlugin) {
+         return
+       }
++      
++      // CRITICAL: Skip library plugins entirely for app projects
++      // Always check project name first since hasPlugin might not work in afterProject callback
++      def isAppProject = project.name == 'app'
++      def hasAppPluginCheck = project.plugins.hasPlugin('com.android.application') ||
++                              project.plugins.hasPlugin('com.android.internal.application')
++      
++      if (isAppProject) {
++        println " ${Emojis.INFORMATION}  ${Colors.YELLOW}Detected app project '${project.name}' - will skip library plugins${Colors.RESET}"
++      }
++      
+       for (module in modules) {
+         for (modulePlugin in module.plugins) {
++          // Debug: Log all plugins being considered
++          def isLibraryPlugin = (modulePlugin.id == 'com.android.library' || modulePlugin.id == 'com.android.internal.library')
++          def isExpoModulePlugin = (modulePlugin.id == 'expo-module-gradle-plugin' || module.name == 'expo-modules-core')
++          
++          // Note: expo-module-gradle-plugin is needed for app projects, but it tries to apply library plugin
++          // We'll catch that error in the catch block below
++          
++          if (isLibraryPlugin) {
++            println " ${Emojis.INFORMATION}  ${Colors.YELLOW}Found library plugin '${modulePlugin.id}' from module '${module.name}' for project '${project.name}'${Colors.RESET}"
++          }
++          
++          // CRITICAL: Don't apply library plugins to projects that have application plugin
++          // Check project name first (most reliable), then hasPlugin
++          def shouldSkipLibraryPlugin = isLibraryPlugin && (isAppProject || hasAppPluginCheck)
++          
++          if (shouldSkipLibraryPlugin) {
++            println " ⚠️  ${Colors.YELLOW}Skipping library plugin '${modulePlugin.id}' for project '${project.name}' (isAppProject=${isAppProject}, hasAppPlugin=${hasAppPluginCheck})${Colors.RESET}"
++            continue
++          }
+           println " ${Emojis.INFORMATION}  ${Colors.YELLOW}Applying gradle plugin${Colors.RESET} '${Colors.GREEN}${modulePlugin.id}${Colors.RESET}' (${module.name}@${module.version})"
+-          project.plugins.apply(modulePlugin.id)
++          
++          // Final safety check before applying
++          def shouldSkip = (modulePlugin.id == 'com.android.library' || modulePlugin.id == 'com.android.internal.library') && 
++                          (isAppProject || hasAppPluginCheck)
++          if (shouldSkip) {
++              println " ⚠️  ${Colors.YELLOW}Skipping library plugin '${modulePlugin.id}' - project already has application plugin${Colors.RESET}"
++            continue
++          }
++          
++          // Apply the plugin - let project-level interceptors handle library plugin conflicts
++          // This allows expo-module-gradle-plugin to complete its configuration even if library plugin fails
++          try {
++            project.plugins.apply(modulePlugin.id)
++          } catch (Throwable e) {
++            // Catch library plugin conflicts - this happens when expo-module-gradle-plugin tries to apply library plugin to app
++            def errorMsg = e.message ?: ''
++            def errorStr = e.toString()
++            def causeMsg = e.cause?.message ?: ''
++            
++            // Check for library plugin conflict in multiple ways
++            def hasConflictKeywords = errorMsg.contains('cannot be applied in the same project') ||
++                                     errorMsg.contains('com.android.library') && errorMsg.contains('com.android.application') ||
++                                     errorStr.contains('cannot be applied in the same project') ||
++                                     causeMsg.contains('cannot be applied in the same project')
++            
++            def isLibraryConflict = (isLibraryPlugin || isExpoModulePlugin) && isAppProject && hasConflictKeywords
++            
++            if (isLibraryConflict) {
++              // For expo-module-gradle-plugin, the library plugin conflict is expected for app projects
++              // We've already fixed ExpoModulesCorePlugin.gradle to handle missing components.release
++              println " ⚠️  ${Colors.YELLOW}expo-module-gradle-plugin: library plugin conflict handled (expected for app projects)${Colors.RESET}"
++              // Don't re-throw - allow the plugin application to continue
++              // The plugin will complete its configuration without the library plugin
++            } else if (isLibraryPlugin && isAppProject) {
++              // Direct library plugin application - skip it
++              println " ⚠️  ${Colors.YELLOW}Skipped library plugin '${modulePlugin.id}' due to conflict: ${errorMsg}${Colors.RESET}"
++              continue
++            } else {
++              // Re-throw if it's not a library conflict
++              throw e
++            }
++          }
+         }
+       }
+     }

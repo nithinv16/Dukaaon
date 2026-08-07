@@ -30,30 +30,17 @@ export const useManufacturersStore = create<ManufacturersState>()(
       setNearbyManufacturers: (manufacturers) => set({ nearbyManufacturers: manufacturers }),
       fetchNearbyManufacturers: async (latitude: number, longitude: number, radius: number) => {
         try {
-          // In a real implementation, you would fetch from Supabase or API
-          // For now, using mock data
-          const mockManufacturers: NearbyManufacturer[] = [
-            {
-              id: '1',
-              name: 'ABC Manufacturing',
-              distance: 3.2,
-              categories: ['Food Products', 'Packaged Goods'],
-              latitude: latitude + 0.01,
-              longitude: longitude + 0.01
-            },
-            {
-              id: '2',
-              name: 'XYZ Industries',
-              distance: 5.7,
-              categories: ['Beverages', 'Snacks'],
-              latitude: latitude - 0.01, 
-              longitude: longitude - 0.01
-            }
-          ];
-          
-          // Set the manufacturers in the store
-          set({ nearbyManufacturers: mockManufacturers });
-          
+          // NOTE: The UI (NearbyManufacturers component) uses SellersDataService.fetchNearbySellers() directly.
+          // This store method is unused but kept for backward compatibility.
+          const { data, error } = await supabase.rpc('get_nearby_sellers', {
+            user_lat: latitude,
+            user_lng: longitude,
+            radius_km: radius,
+            seller_role: 'manufacturer'
+          });
+
+          if (error) throw error;
+          set({ nearbyManufacturers: data || [] });
         } catch (error) {
           console.error('Error fetching nearby manufacturers:', error);
         }

@@ -10,7 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AzureSpeechService, { VoiceSearchResult } from '../../services/azureAI/speechService';
+import speechService, { UnifiedVoiceSearchResult } from '../../services/speechService';
 import { useTranslation } from '../../contexts/LanguageContext';
 import OCRScanner from './OCRScanner';
 import { SpeechRecognizer } from 'microsoft-cognitiveservices-speech-sdk';
@@ -43,22 +43,22 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
   const [azureServiceError, setAzureServiceError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check Azure configuration on component mount
+    // Check speech service configuration on component mount
     try {
       // Just check if the service is available
-      if (AzureSpeechService) {
+      if (speechService) {
         setAzureServiceError(null);
       } else {
-        throw new Error('Azure Speech Service not available');
+        throw new Error('Speech Service not available');
       }
     } catch (error) {
-      setAzureServiceError(error instanceof Error ? error.message : 'Azure Speech Service configuration error');
+      setAzureServiceError(error instanceof Error ? error.message : 'Speech Service configuration error');
     }
 
     return () => {
       // Cleanup recognizer on unmount
       if (currentRecognizer) {
-        AzureSpeechService.stopContinuousRecognition(currentRecognizer);
+        speechService.stopContinuousRecognition(currentRecognizer);
       }
     };
   }, [currentRecognizer]);
@@ -111,8 +111,8 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
       return;
     }
 
-    // Check if AzureSpeechService is properly initialized
-    if (!AzureSpeechService || !AzureSpeechService.startContinuousRecognition) {
+    // Check if speechService is properly initialized
+    if (!speechService || !speechService.startContinuousRecognition) {
       Alert.alert(
         'Service Unavailable',
         'Speech recognition service is not available. This might be due to a missing crypto polyfill.',
@@ -130,10 +130,10 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
       startPulseAnimation();
       startWaveAnimation();
 
-      const recognizer = AzureSpeechService.startContinuousRecognition(
+      const recognizer = await speechService.startContinuousRecognition(
         selectedLanguage,
         async (result) => {
-          console.log('Azure Speech Recognition Result:', result);
+          console.log('Speech Recognition Result:', result);
           console.log('Recognized text:', result.text);
           console.log('Confidence:', result.confidence);
           console.log('Is interim result:', result.confidence <= 0.8);
@@ -181,7 +181,7 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
 
   const stopVoiceSearch = async () => {
     if (currentRecognizer) {
-      AzureSpeechService.stopContinuousRecognition(currentRecognizer);
+      await speechService.stopContinuousRecognition(currentRecognizer);
       setCurrentRecognizer(null);
     }
 
@@ -228,7 +228,7 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
     
     try {
       // Process the voice command to extract intent and entities
-      const voiceResult: VoiceSearchResult = await AzureSpeechService.voiceSearch(selectedLanguage);
+      const voiceResult: UnifiedVoiceSearchResult = await speechService.voiceSearch(selectedLanguage);
       
       // Handle different intents
       switch (voiceResult.intent) {
@@ -272,7 +272,7 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
 
   const speakResponse = async (text: string) => {
     try {
-      const voiceNames = AzureSpeechService.getVoiceNames(selectedLanguage);
+      const voiceNames = speechService.getVoiceNames(selectedLanguage);
       const voiceName = voiceNames[0]; // Use first available voice
       
       // Translate response if needed
@@ -287,7 +287,7 @@ const VoiceSearch: React.FC<VoiceSearchProps> = ({
         }
       }
       
-      await AzureSpeechService.textToSpeech(responseText, selectedLanguage, voiceName);
+      await speechService.textToSpeech(responseText, selectedLanguage, voiceName);
     } catch (error) {
       console.error('Text-to-speech error:', error);
     }

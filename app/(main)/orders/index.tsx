@@ -1,15 +1,36 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Platform, TouchableOpacity } from 'react-native';
-import { Text, Card, Button, Chip, Divider, IconButton, Portal, Modal } from 'react-native-paper';
+import { View, StyleSheet, FlatList, RefreshControl, Platform, TouchableOpacity, Pressable } from 'react-native';
+import { Text, Button, Portal, Modal, Surface, ActivityIndicator } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { SystemStatusBar } from '../../../components/SystemStatusBar';
-import { MaterialIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase/supabase';
 import { useAuthStore } from '../../../store/auth';
-import { Order, OrderStatus } from '../../../types/orders';
+import { Order } from '../../../types/orders';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { translationService } from '../../../services/translationService';
+import { SystemStatusBar } from '../../../components/SystemStatusBar';
+
+// Premium Theme Constants
+const COLORS = {
+  primary: '#FF7D00',
+  secondary: '#1A1A1A',
+  background: '#F8F9FA',
+  surface: '#FFFFFF',
+  text: '#1A1A1A',
+  textLight: '#8E8E93',
+  border: '#F0F0F0',
+  success: '#2E7D32',        // Darker green for better contrast
+  danger: '#C62828',          // Darker red for better contrast
+  warning: '#E65100',         // Deep orange (matches primary tone)
+  info: '#1565C0',            // Darker blue for better contrast
+  successBg: '#E8F5E9',       // Light green
+  dangerBg: '#FFEBEE',        // Light red
+  warningBg: '#FFF3E0',       // Light orange (matches primary)
+  infoBg: '#E3F2FD',          // Light blue
+  pendingBg: '#FFF3E0',       // Light orange for pending
+  pendingText: '#E65100',     // Deep orange for pending text
+};
 
 export default function Orders() {
   const router = useRouter();
@@ -26,29 +47,27 @@ export default function Orders() {
   const originalTexts = {
     myOrders: 'My Orders',
     noOrders: 'No orders found',
+    noOrdersSub: 'Looks like you haven\'t placed any orders yet.',
+    startShopping: 'Start Shopping',
     orderNumber: 'Order #',
     totalAmount: 'Total Amount',
     status: 'Status',
-    paymentStatus: 'Payment Status',
-    orderDate: 'Order Date',
     items: 'Items',
-    viewDetails: 'View Details',
     reorder: 'Reorder',
     cancel: 'Cancel',
     pending: 'Pending',
+    placed: 'Placed',
     confirmed: 'Confirmed',
     shipped: 'Shipped',
     delivered: 'Delivered',
     cancelled: 'Cancelled',
     completed: 'Completed',
-    failed: 'Failed',
-    outOfStock: 'Out of Stock',
-    deliveryFee: 'Delivery Fee',
     total: 'Total',
-    confirmCancel: 'Confirm Cancellation',
+    cancelOrderTitle: 'Cancel Order',
     cancelOrderMessage: 'Are you sure you want to cancel this order?',
-    yes: 'Yes',
-    no: 'No'
+    keepOrder: 'No, Keep Order',
+    confirmCancel: 'Yes, Cancel Order',
+    outOfStock: 'Out of Stock'
   };
 
   // State for translations
@@ -63,18 +82,17 @@ export default function Orders() {
           return;
         }
 
-        // Translate each text individually using translateText method
         const translationPromises = Object.entries(originalTexts).map(async ([key, value]) => {
           const translated = await translationService.translateText(value, currentLanguage);
           return [key, translated.translatedText];
         });
-        
+
         const translatedEntries = await Promise.all(translationPromises);
         const newTranslations = Object.fromEntries(translatedEntries);
-        setTranslations(newTranslations);
+        setTranslations(newTranslations as any);
       } catch (error) {
         console.error('Error loading translations:', error);
-        setTranslations(originalTexts); // Fallback to original texts
+        setTranslations(originalTexts);
       }
     };
 
@@ -82,14 +100,13 @@ export default function Orders() {
   }, [currentLanguage]);
 
   // Translation function
-  const getTranslatedText = (key: string) => {
-    return translations[key as keyof typeof translations] || key;
+  const t = (key: keyof typeof originalTexts) => {
+    return translations[key] || originalTexts[key] || key;
   };
 
   useEffect(() => {
     fetchOrders();
-    
-    // Set up real-time subscription for order updates
+
     const subscription = supabase
       .channel('orders-list-updates')
       .on(
@@ -101,23 +118,23 @@ export default function Orders() {
         },
         (payload) => {
           console.log('Order updated in list:', payload);
-          // Refresh the orders list to show updated data
           fetchOrders();
         }
       )
       .subscribe();
 
-    // Cleanup subscription on unmount
-     return () => {
-       subscription.unsubscribe();
-     };
-   }, []);
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const fetchOrders = useCallback(async () => {
     try {
       if (!user?.id) return;
 
-      const { data, error } = await supabase
+      // Filter out pending orders older than 5 minutes (abandoned/failed payments)
+      // This prevents showing orders that were never completed
+      const { data: allOrders, error: fetchError } = await supabase
         .from('orders')
         .select(`
           *,
@@ -132,8 +149,40 @@ export default function Orders() {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setOrders(data || []);
+      if (fetchError) throw fetchError;
+
+      // Filter out pending orders older than 5 minutes (except COD/cash orders)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const filteredOrders = (allOrders || []).filter(order => {
+        const status = order.status?.toLowerCase()?.trim();
+        const paymentMethod = order.payment_method?.toLowerCase()?.trim();
+
+        // Orders with 'placed' status are confirmed orders - always show them
+        if (status === 'placed') {
+          return true;
+        }
+
+        // Always show COD/cash/online orders (including null/undefined which defaults to COD)
+        if (!paymentMethod || paymentMethod === 'cod' || paymentMethod === 'cash' || paymentMethod === 'online') {
+          return true;
+        }
+
+        // Show non-pending payment orders (completed payments)
+        if (order.payment_status !== 'pending') {
+          return true;
+        }
+
+        // Show pending online payment orders created within last 5 minutes
+        const orderDate = new Date(order.created_at);
+        if (orderDate > fiveMinutesAgo) {
+          return true;
+        }
+
+        // Filter out old pending online payment orders (abandoned/failed payments)
+        return false;
+      });
+
+      setOrders(filteredOrders);
     } catch (error) {
       console.error('Error fetching orders:', error);
     } finally {
@@ -150,7 +199,6 @@ export default function Orders() {
 
   const handleReorder = useCallback(async (order: Order) => {
     try {
-      // Create a new order with the same items
       const { data, error } = await supabase
         .from('orders')
         .insert({
@@ -167,8 +215,7 @@ export default function Orders() {
         .single();
 
       if (error) throw error;
-      
-      // Navigate to the new order
+
       router.push(`/(main)/orders/${data.id}`);
     } catch (error) {
       console.error('Error reordering:', error);
@@ -179,181 +226,289 @@ export default function Orders() {
     if (!selectedOrder) return;
 
     try {
+      // Update order status
       const { error } = await supabase
         .from('orders')
-        .update({ 
+        .update({
           status: 'cancelled',
           cancellation_reason: 'Cancelled by user'
         })
         .eq('id', selectedOrder.id);
 
       if (error) throw error;
-      
-      // Refresh orders list
+
+      // Send WhatsApp notification to seller
+      try {
+        // Get seller details
+        const { data: orderWithSeller } = await supabase
+          .from('orders')
+          .select(`
+            *,
+            seller:profiles!orders_seller_id_fkey(
+              id,
+              phone_number,
+              business_details
+            )
+          `)
+          .eq('id', selectedOrder.id)
+          .single();
+
+        if (orderWithSeller?.seller?.phone_number) {
+          // Import WhatsApp service
+          const { sendTemplateNotification } = await import('../../../services/whatsapp');
+
+          // Get retailer name (customer who cancelled)
+          const retailerName = user?.business_details?.shopName || 'Customer';
+
+          // Get seller name
+          const sellerName = orderWithSeller.seller.business_details?.shopName || 'Seller';
+
+          // Determine payment status
+          const paymentStatus = selectedOrder.payment_status === 'completed'
+            ? 'Paid - Refund processing'
+            : 'No payment collected';
+
+          // Send notification to seller with 5 variables
+          const result = await sendTemplateNotification(
+            'ORDER_CANCELLED_BY_RETAILER_to_seller',
+            orderWithSeller.seller.phone_number,
+            {
+              sellerName: sellerName,
+              // Use full order_number from orders table for consistency
+              orderNumber: orderWithSeller.order_number || selectedOrder.id.substring(0, 8),
+              customerName: retailerName.substring(0, 30), // Limit length
+              paymentStatus: 'Unpaid', // Keep it very simple
+              date: new Date().toLocaleDateString('en-IN')
+            },
+            {
+              userId: orderWithSeller.seller.id,
+              orderId: selectedOrder.id
+            }
+          );
+
+          if (result.success) {
+            console.log('[Orders] WhatsApp notification sent to seller about cancellation');
+          } else {
+            console.warn('[Orders] Failed to send WhatsApp notification:', result.error);
+          }
+        }
+      } catch (whatsappError) {
+        // Don't fail the cancellation if WhatsApp fails
+        console.warn('[Orders] Unexpected error sending WhatsApp:', whatsappError);
+      }
+
       fetchOrders();
       setCancelModalVisible(false);
       setSelectedOrder(null);
     } catch (error) {
       console.error('Error cancelling order:', error);
     }
-  }, [selectedOrder, fetchOrders]);
+  }, [selectedOrder, fetchOrders, user]);
 
-  // Generate consistent color for batch numbers - memoized for performance
-  const getBatchColor = useCallback((batchNumber: string) => {
-    const colors = [
-      '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-      '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
-      '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D7BDE2'
-    ];
-    
-    // Create a simple hash from batch number
-    let hash = 0;
-    for (let i = 0; i < batchNumber.length; i++) {
-      hash = batchNumber.charCodeAt(i) + ((hash << 5) - hash);
+  const getStatusColor = (status: string) => {
+    switch (status?.toLowerCase()) {
+      // Completed states - Green
+      case 'delivered':
+      case 'completed':
+        return { bg: '#E8F5E9', text: '#2E7D32' };
+
+      // Error states - Red
+      case 'cancelled':
+      case 'failed':
+      case 'rejected':
+        return { bg: '#FFEBEE', text: '#C62828' };
+
+      // In transit / Shipping states - Blue
+      case 'shipped':
+      case 'in_transit':
+      case 'out_for_delivery':
+        return { bg: '#E3F2FD', text: '#1565C0' };
+
+      // Processing states - Purple/Indigo
+      case 'processing':
+      case 'picked_up':
+        return { bg: '#EDE7F6', text: '#5E35B1' };
+
+      // Confirmed/Accepted states - Teal
+      case 'confirmed':
+      case 'accepted':
+        return { bg: '#E0F2F1', text: '#00796B' };
+
+      // Pending state - Orange (matches app theme)
+      case 'pending':
+      default:
+        return { bg: '#FFF3E0', text: '#E65100' };
     }
-    
-    // Use absolute value and modulo to get consistent color index
-    const colorIndex = Math.abs(hash) % colors.length;
-    return colors[colorIndex];
-  }, []);
+  };
+
+  // Status Badge Component
+  const StatusBadge = ({ status }: { status: string }) => {
+    const colors = getStatusColor(status);
+    const displayStatus = status === 'confirmed' ? 'placed' : status;
+    return (
+      <View style={[styles.statusBadge, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.statusText, { color: colors.text }]}>
+          {t(displayStatus as any)}
+        </Text>
+      </View>
+    );
+  };
 
   const renderOrderCard = useCallback(({ item: order }: { item: Order }) => {
-    // Check if this is a batch order with batch number
-    const batchNumber = order.master_orders?.delivery_batches?.[0]?.batch_number;
-    const isBatchOrder = !!batchNumber;
-    
+    const date = new Date(order.created_at).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric'
+    });
+
+    // Calculate total items
+    const itemCount = order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+    const itemText = itemCount === 1 ? 'item' : 'items';
+
+    // Calculate display total (ensure delivery fee is handled)
+    const subtotal = order.items.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.price) || 0)), 0);
+
+    // Handle delivery_fee - check if it's null, undefined, or a valid number
+    let deliveryFee = 0;
+    if (order.delivery_fee !== null && order.delivery_fee !== undefined) {
+      deliveryFee = Number(order.delivery_fee);
+      if (isNaN(deliveryFee)) {
+        deliveryFee = 0;
+      }
+    }
+
+    const finalTotal = subtotal + deliveryFee;
+
+    // Debug logging for troubleshooting
+    if (deliveryFee === 0 && order.delivery_fee !== null && order.delivery_fee !== undefined) {
+      console.log('Orders Screen - Delivery fee issue:', {
+        orderId: order.id,
+        delivery_fee: order.delivery_fee,
+        deliveryFee,
+        subtotal,
+        finalTotal
+      });
+    }
+
+    const isPending = order.status === 'pending';
+
     return (
-      <Card style={styles.card} onPress={() => router.push(`/(main)/orders/${order.id}`)}>
-        <Card.Content>
-          <View style={styles.orderHeader}>
-            <View style={styles.orderTitleContainer}>
-              <Text variant="titleMedium">Order #{order.order_number}</Text>
-              {isBatchOrder && (
-                <Text 
-                  variant="bodySmall" 
-                  style={[
-                    styles.batchNumber,
-                    { 
-                      backgroundColor: getBatchColor(batchNumber),
-                      color: '#fff',
-                      paddingHorizontal: 8,
-                      paddingVertical: 2,
-                      borderRadius: 12,
-                      fontWeight: '600'
-                    }
-                  ]}
-                >
-                  Batch: {batchNumber}
-                </Text>
+      <Pressable
+        style={({ pressed }) => [
+          styles.orderCard,
+          pressed && styles.orderCardPressed
+        ]}
+        onPress={() => router.push(`/(main)/orders/${order.id}`)}
+      >
+        {/* Header: Order #, Date, Status */}
+        <View style={styles.cardHeader}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.orderNumber}>{t('orderNumber')} {order.order_number}</Text>
+            <Text style={styles.orderDate}>{date}</Text>
+            {/* Payment Status Banner */}
+            {order.payment_method && (
+              (order.payment_method === 'cod' || order.payment_method === 'cash') ||
+              order.payment_status === 'completed'
+            ) && (
+                <View style={[
+                  styles.paymentBanner,
+                  order.payment_method === 'cod' || order.payment_method === 'cash'
+                    ? styles.codBanner
+                    : styles.paidBanner
+                ]}>
+                  <Text style={[
+                    styles.paymentBannerText,
+                    order.payment_method === 'cod' || order.payment_method === 'cash'
+                      ? { color: COLORS.warning }
+                      : { color: COLORS.success }
+                  ]}>
+                    {order.payment_method === 'cod' || order.payment_method === 'cash' ? 'COD' : 'Paid'}
+                  </Text>
+                </View>
               )}
-            </View>
-            <Chip>{order.status}</Chip>
           </View>
+          <StatusBadge status={order.status} />
+        </View>
 
-          <Text style={styles.date}>
-            {new Date(order.created_at).toLocaleDateString()}
-          </Text>
+        {/* Divider */}
+        <View style={styles.divider} />
 
-        <Divider style={styles.divider} />
-
-        <View style={styles.itemsList}>
-          {order.items.map((item, index) => (
+        {/* Items Preview (First 2 items) */}
+        <View style={styles.itemsContainer}>
+          {order.items.slice(0, 2).map((item, index) => (
             <View key={index} style={styles.itemRow}>
-              <Text numberOfLines={1} style={item.outOfStock ? styles.strikethrough : undefined}>
-                {item.quantity}x {item?.name || 'Product Name'}
+              <View style={styles.itemDot} />
+              <Text style={styles.itemName} numberOfLines={1}>
+                {item.quantity}x  {item.name}
               </Text>
-              {item.outOfStock && (
-                <Chip 
-                  mode="outlined" 
-                  textStyle={styles.outOfStockText}
-                  style={styles.outOfStockChip}
-                  compact
-                >
-                  Out of Stock
-                </Chip>
-              )}
             </View>
           ))}
-          {order.out_of_stock_items && order.out_of_stock_items.length > 0 && (
-            order.out_of_stock_items.map((item, index) => (
-              <View key={`oos-${index}`} style={styles.itemRow}>
-                <Text numberOfLines={1} style={styles.strikethrough}>
-                  {item.quantity}x {item?.name || 'Product Name'}
-                </Text>
-                <Chip 
-                  mode="outlined" 
-                  textStyle={styles.outOfStockText}
-                  style={styles.outOfStockChip}
-                  compact
-                >
-                  Out of Stock
-                </Chip>
-              </View>
-            ))
+          {order.items.length > 2 && (
+            <Text style={styles.moreItemsText}>
+              + {order.items.length - 2} more items
+            </Text>
           )}
         </View>
 
-        <View style={styles.orderFooter}>
-          <OrderPriceBreakdown order={order} />
-          
-          <View style={styles.actions}>
-            {order.status === 'pending' && (
-              <Button 
-                mode="outlined" 
+        {/* Footer: Price & Actions */}
+        <View style={styles.cardFooter}>
+          <View>
+            <Text style={styles.totalLabel}>{t('totalAmount')}</Text>
+            <Text style={styles.totalPrice}>₹{finalTotal.toFixed(2)}</Text>
+          </View>
+
+          <View style={styles.actionsContainer}>
+            {isPending && (
+              <TouchableOpacity
+                style={styles.cancelButton}
                 onPress={() => {
                   setSelectedOrder(order);
                   setCancelModalVisible(true);
                 }}
               >
-                Cancel
-              </Button>
+                <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
+              </TouchableOpacity>
             )}
-            <Button 
-              mode="contained"
+            <TouchableOpacity
+              style={styles.reorderButton}
               onPress={() => handleReorder(order)}
             >
-              Reorder
-            </Button>
+              <MaterialIcons name="refresh" size={16} color="#FFF" style={{ marginRight: 4 }} />
+              <Text style={styles.reorderButtonText}>{t('reorder')}</Text>
+            </TouchableOpacity>
           </View>
         </View>
-      </Card.Content>
-    </Card>
+      </Pressable>
     );
-  }, [router, getBatchColor, handleReorder]);
+  }, [router, handleReorder, t]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      {/* Use light status bar on iOS, dark on Android */}
-      <SystemStatusBar style={Platform.OS === 'ios' ? 'dark' : 'light'} />
-      
-      {/* Custom Header that manually accounts for the notch */}
-      <View 
-        style={[
-          styles.headerContainer, 
-          { 
-            paddingTop: insets.top > 0 ? insets.top : Platform.OS === 'ios' ? 20 : 10,
-            height: (insets.top > 0 ? insets.top : Platform.OS === 'ios' ? 20 : 10) + 56
-          }
-        ]}
-      >
+    <View style={styles.mainContainer}>
+      <SystemStatusBar style="dark" />
+
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <MaterialIcons name="arrow-back" size={24} color="#333" />
+          <MaterialIcons name="arrow-back" size={24} color={COLORS.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{getTranslatedText('myOrders')}</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle}>{t('myOrders')}</Text>
+        <View style={styles.placeholderIcon} />
       </View>
-      
-      {/* Main content */}
-      <View style={styles.container}>
+
+      {/* Content */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      ) : (
         <FlatList
           data={orders}
           renderItem={renderOrderCard}
           keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -361,273 +516,352 @@ export default function Orders() {
                 setRefreshing(true);
                 fetchOrders();
               }}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
             />
           }
           ListEmptyComponent={
-            !loading && (
-              <Text style={styles.emptyText}>No orders found</Text>
-            )
-          }
-          // Performance optimizations
-          removeClippedSubviews={true}
-          initialNumToRender={10}
-          maxToRenderPerBatch={5}
-          windowSize={10}
-          updateCellsBatchingPeriod={50}
-          getItemLayout={(data, index) => ({
-            length: 200, // Approximate height of each order card
-            offset: 200 * index,
-            index,
-          })}
-        />
-
-        <Portal>
-          <Modal
-            visible={cancelModalVisible}
-            onDismiss={() => setCancelModalVisible(false)}
-            contentContainerStyle={styles.modalContent}
-          >
-            <Text variant="titleLarge" style={styles.modalTitle}>
-              Cancel Order
-            </Text>
-            <Text style={styles.modalText}>
-              Are you sure you want to cancel this order?
-            </Text>
-            <View style={styles.modalActions}>
-              <Button 
-                onPress={() => setCancelModalVisible(false)}
-                style={styles.modalButton}
-              >
-                No, Keep It
-              </Button>
-              <Button 
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconContainer}>
+                <Ionicons name="bag-handle-outline" size={64} color={COLORS.textLight} />
+              </View>
+              <Text style={styles.emptyTitle}>{t('noOrders')}</Text>
+              <Text style={styles.emptySub}>{t('noOrdersSub')}</Text>
+              <Button
                 mode="contained"
-                onPress={handleCancelOrder}
-                style={styles.modalButton}
-                buttonColor="#ff4444"
+                onPress={() => router.push('/(main)/screens/categories')}
+                style={styles.shopButton}
+                labelStyle={styles.shopButtonText}
               >
-                Yes, Cancel
+                {t('startShopping')}
               </Button>
             </View>
-          </Modal>
-        </Portal>
-      </View>
+          }
+        />
+      )}
+
+      {/* Cancel Modal */}
+      <Portal>
+        <Modal
+          visible={cancelModalVisible}
+          onDismiss={() => setCancelModalVisible(false)}
+          contentContainerStyle={styles.modalContainer}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.warningIconContainer}>
+              <MaterialIcons name="warning" size={32} color={COLORS.danger} />
+            </View>
+            <Text style={styles.modalTitle}>{t('cancelOrderTitle')}</Text>
+            <Text style={styles.modalMessage}>{t('cancelOrderMessage')}</Text>
+
+            <View style={styles.modalActions}>
+              <Button
+                mode="outlined"
+                onPress={() => setCancelModalVisible(false)}
+                style={styles.modalButtonSecondary}
+                textColor={COLORS.secondary}
+                theme={{ colors: { outline: COLORS.border } }}
+              >
+                {t('keepOrder')}
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handleCancelOrder}
+                style={styles.modalButtonPrimary}
+                buttonColor={COLORS.danger}
+              >
+                {t('confirmCancel')}
+              </Button>
+            </View>
+          </View>
+        </Modal>
+      </Portal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerContainer: {
+  mainContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Header Styles
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#fff',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
     paddingHorizontal: 16,
+    paddingBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
     zIndex: 10,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.text,
+    letterSpacing: 0.5,
   },
   backButton: {
     padding: 8,
-    marginLeft: 0,
+    marginLeft: -8,
   },
-  headerTitle: {
-    fontWeight: '600',
-    color: '#333',
-    fontSize: 18,
-    textAlign: 'center',
-    flex: 1,
+  placeholderIcon: {
+    width: 40,
   },
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    paddingBottom: 60,
-  },
-  list: {
+
+  // List Styles
+  listContent: {
     padding: 16,
+    paddingBottom: 40,
   },
-  card: {
+
+  // Order Card Styles
+  orderCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
     marginBottom: 16,
+    padding: 16,
     elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FFF', // Subtle highlight
   },
-  orderHeader: {
+  orderCardPressed: {
+    transform: [{ scale: 0.995 }],
+    backgroundColor: '#FAFAFA',
+  },
+  cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  orderTitleContainer: {
+  headerLeft: {
     flex: 1,
   },
-  batchNumber: {
+  orderNumber: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 4,
+  },
+  orderDate: {
+    fontSize: 12,
+    color: COLORS.textLight,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    marginLeft: 8,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  paymentBanner: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
     marginTop: 4,
     alignSelf: 'flex-start',
   },
-  date: {
-    color: '#666',
-    marginTop: 4,
+  codBanner: {
+    backgroundColor: '#FFF3E0',
+  },
+  paidBanner: {
+    backgroundColor: '#E8F5E9',
+  },
+  paymentBannerText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   divider: {
-    marginVertical: 12,
-  },
-  itemsList: {
+    height: 1,
+    backgroundColor: COLORS.border,
     marginBottom: 12,
+  },
+  itemsContainer: {
+    marginBottom: 16,
   },
   itemRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  itemDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.primary, // Orange accent
+    marginRight: 8,
+    opacity: 0.7,
+  },
+  itemName: {
+    fontSize: 14,
+    color: '#444',
+    flex: 1,
+  },
+  moreItemsText: {
+    fontSize: 12,
+    color: COLORS.textLight,
+    marginLeft: 14, // align with text
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
+  cardFooter: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
-  },
-  outOfStockChip: {
-    backgroundColor: '#ffebee',
-    borderColor: '#f44336',
-    height: 24,
-  },
-  outOfStockText: {
-    color: '#f44336',
-    fontSize: 10,
-  },
-  strikethrough: {
-    textDecorationLine: 'line-through',
-    color: '#999',
-    flex: 1,
-  },
-  orderFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-  },
-  priceBreakdown: {
-    flex: 1,
-    marginRight: 16,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  priceLabel: {
-    color: '#666',
-  },
-  priceDivider: {
-    marginVertical: 8,
-  },
-  totalLabel: {
-    fontWeight: '600',
-  },
-  total: {
-    color: '#2196F3',
-    fontWeight: '600',
-  },
-  outOfStockNote: {
-    fontSize: 11,
-    color: '#f44336',
-    fontStyle: 'italic',
     marginTop: 4,
   },
-  actions: {
+  totalLabel: {
+    fontSize: 11,
+    color: COLORS.textLight,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  totalPrice: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  actionsContainer: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  emptyText: {
+  reorderButton: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  reorderButtonText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  cancelButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  cancelButtonText: {
+    color: COLORS.textLight,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+
+  // Empty State
+  emptyContainer: {
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 40,
+  },
+  emptyIconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: COLORS.textLight,
     textAlign: 'center',
-    marginTop: 32,
-    color: '#666',
+    marginBottom: 32,
+    lineHeight: 20,
+  },
+  shopButton: {
+    borderRadius: 25,
+    paddingVertical: 4,
+    paddingHorizontal: 16,
+    backgroundColor: COLORS.primary,
+  },
+  shopButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+
+  // Modal Styles
+  modalContainer: {
+    margin: 20,
+    justifyContent: 'center',
   },
   modalContent: {
-    backgroundColor: 'white',
-    padding: 20,
-    margin: 20,
-    borderRadius: 8,
+    backgroundColor: '#FFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 5,
   },
-  modalTitle: {
-    textAlign: 'center',
+  warningIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: COLORS.dangerBg,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 16,
   },
-  modalText: {
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 15,
+    color: COLORS.textLight,
     textAlign: 'center',
     marginBottom: 24,
-    color: '#666',
+    lineHeight: 22,
   },
   modalActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
+    width: '100%',
+    gap: 12,
   },
-  modalButton: {
-    minWidth: 100,
+  modalButtonSecondary: {
+    flex: 1,
+    borderRadius: 12,
   },
-});
-
-// Order price breakdown component - optimized with React.memo
-const OrderPriceBreakdown = React.memo(({ order }: { order: Order }) => {
-  // Memoize expensive calculations
-  const { hasOutOfStockItems, subtotal, deliveryFee, totalAmount } = useMemo(() => {
-    const hasOutOfStock = order.items.some(item => item.outOfStock) || 
-      (order.out_of_stock_items && order.out_of_stock_items.length > 0);
-    
-    // Calculate subtotal from order items
-    const orderItems = Array.isArray(order.items) ? order.items : [];
-    const calculatedSubtotal = orderItems.reduce((sum, item) => {
-      const quantity = Number(item.quantity) || 0;
-      const price = Number(item.price) || 0;
-      return sum + (quantity * price);
-    }, 0);
-    
-    // Get delivery fee from the delivery_fee column
-    const calculatedDeliveryFee = Number(order.delivery_fee) || 0;
-    
-    // Calculate the correct total amount (subtotal + delivery fee)
-    const calculatedTotalAmount = calculatedSubtotal + calculatedDeliveryFee;
-    
-    return {
-      hasOutOfStockItems: hasOutOfStock,
-      subtotal: calculatedSubtotal,
-      deliveryFee: calculatedDeliveryFee,
-      totalAmount: calculatedTotalAmount
-    };
-  }, [order.items, order.out_of_stock_items, order.delivery_fee]);
-  
-  if (deliveryFee > 0) {
-    return (
-      <View style={styles.priceBreakdown}>
-        <View style={styles.priceRow}>
-          <Text variant="bodyMedium" style={styles.priceLabel}>Subtotal:</Text>
-          <Text variant="bodyMedium">₹{subtotal.toFixed(2)}</Text>
-        </View>
-        <View style={styles.priceRow}>
-          <Text variant="bodyMedium" style={styles.priceLabel}>Delivery Fee:</Text>
-          <Text variant="bodyMedium">₹{deliveryFee.toFixed(2)}</Text>
-        </View>
-        <Divider style={styles.priceDivider} />
-        <View style={styles.priceRow}>
-          <Text variant="titleMedium" style={styles.totalLabel}>Total:</Text>
-          <Text variant="titleMedium" style={styles.total}>₹{totalAmount.toFixed(2)}</Text>
-        </View>
-        {hasOutOfStockItems && (
-          <Text style={styles.outOfStockNote}>
-            * Total excludes out-of-stock items
-          </Text>
-        )}
-      </View>
-    );
-  } else {
-    return (
-      <View style={styles.priceBreakdown}>
-        <Text variant="titleMedium" style={styles.total}>
-          ₹{subtotal.toFixed(2)}
-        </Text>
-        {hasOutOfStockItems && (
-          <Text style={styles.outOfStockNote}>
-            * Total excludes out-of-stock items
-          </Text>
-        )}
-      </View>
-    );
-  }
+  modalButtonPrimary: {
+    flex: 1,
+    borderRadius: 12,
+  },
 });

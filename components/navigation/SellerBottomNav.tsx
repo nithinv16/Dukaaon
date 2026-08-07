@@ -9,7 +9,7 @@ export function SellerBottomNav() {
   const router = useRouter();
   const pathname = usePathname();
   const { currentLanguage } = useLanguage();
-  
+
   // Translation state
   const [translations, setTranslations] = useState({
     home: 'Home',
@@ -50,12 +50,62 @@ export function SellerBottomNav() {
   }, [currentLanguage]);
 
   const isActive = (path: string) => {
-    // Special case for home path
-    if (path === '/(main)/wholesaler' && (pathname === '/(main)/wholesaler' || pathname === '/(main)/wholesaler/')) {
-      return true;
+    // Normalize pathname - remove trailing slash
+    const normalizedPathname = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+
+    // Debug logging (remove in production)
+    // console.log('SellerBottomNav pathname:', normalizedPathname, 'checking path:', path);
+
+    // Special handling for Profile - includes profile and settings
+    if (path === '/(main)/wholesaler/profile') {
+      return normalizedPathname.includes('/wholesaler/profile') ||
+        normalizedPathname.includes('/wholesaler/settings');
     }
-    // For other paths, check if pathname includes the path
-    return pathname.includes(path);
+
+    // Special handling for Loans
+    if (path === '/(main)/wholesaler/loan') {
+      return normalizedPathname.includes('/wholesaler/loan');
+    }
+
+    // Special handling for Help
+    if (path === '/(main)/wholesaler/help') {
+      return normalizedPathname.includes('/wholesaler/help');
+    }
+
+    // Special handling for Home
+    if (path === '/(main)/wholesaler') {
+      // Check various home path patterns
+      const isHomePath =
+        normalizedPathname === '/(main)/wholesaler' ||
+        normalizedPathname === '/wholesaler' ||
+        normalizedPathname === '/(main)/wholesaler/index' ||
+        normalizedPathname === '/wholesaler/index' ||
+        normalizedPathname.endsWith('/wholesaler') ||
+        normalizedPathname.endsWith('/wholesaler/index');
+
+      if (isHomePath) {
+        return true;
+      }
+
+      // Check if it's a home-related sub-route (products, orders, customers, etc.)
+      // But NOT profile, loan, or help
+      const isProfileRoute = normalizedPathname.includes('/wholesaler/profile') ||
+        normalizedPathname.includes('/wholesaler/settings');
+      const isLoanRoute = normalizedPathname.includes('/wholesaler/loan');
+      const isHelpRoute = normalizedPathname.includes('/wholesaler/help');
+
+      if (isProfileRoute || isLoanRoute || isHelpRoute) {
+        return false;
+      }
+
+      // Any other wholesaler route is considered "home" related
+      if (normalizedPathname.includes('/wholesaler/')) {
+        return true;
+      }
+    }
+
+    // Default: exact match
+    return normalizedPathname === path;
   };
 
   const navItems = [
@@ -86,7 +136,7 @@ export function SellerBottomNav() {
     if (isActive(path)) {
       return;
     }
-    
+
     // Use replace for navigation to avoid stacking screens
     router.replace(path);
   };
@@ -95,14 +145,14 @@ export function SellerBottomNav() {
     <View style={styles.container}>
       {navItems.map((item) => (
         <View key={item.path} style={styles.navItem}>
-          <IconButton 
+          <IconButton
             icon={item.icon}
-            size={22}
+            size={26}
             onPress={() => handleNavigation(item.path)}
-            iconColor={isActive(item.path) ? '#2196F3' : '#666'}
+            iconColor={isActive(item.path) ? '#FF7D00' : '#9E9E9E'}
           />
-          <Text 
-            variant="labelSmall" 
+          <Text
+            variant="labelSmall"
             style={[
               styles.label,
               isActive(item.path) && styles.activeLabel
@@ -122,25 +172,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     alignItems: 'center',
     backgroundColor: '#fff',
-    paddingTop: 4,
-    paddingBottom: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    minHeight: 42,
+    paddingTop: 8,
+    paddingBottom: 8,
+    height: 85, // Increased height for better touch targets
   },
   navItem: {
     alignItems: 'center',
-    paddingVertical: 2,
+    justifyContent: 'center',
     flex: 1,
+    paddingVertical: 4,
   },
   label: {
-    color: '#666',
-    marginTop: -3,
-    fontSize: 10,
+    color: '#9E9E9E',
+    marginTop: -2, // Pull label closer to icon
+    fontSize: 11,
     textAlign: 'center',
+    fontWeight: '500',
   },
   activeLabel: {
-    color: '#2196F3',
-    fontWeight: 'bold',
+    color: '#FF7D00', // Orange theme
+    fontWeight: '700',
   },
 });

@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { View, StyleSheet, ScrollView, Linking, Image, Alert, Platform } from 'react-native';
-import { Text, Card, Button, List, IconButton, Portal, Modal, Divider } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, Linking, Image, Alert, Platform, TouchableOpacity } from 'react-native';
+import { Text, Card, Button, Portal, Modal, Divider } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SystemStatusBar } from '../../../components/SystemStatusBar';
 import { usePaymentStore } from '../../../store/payment';
@@ -30,10 +31,10 @@ export default function PaymentMethods() {
   const [selectedMethod, setSelectedMethod] = React.useState<PaymentMethod | null>(null);
   const [codEnabled, setCodEnabled] = React.useState(true); // COD is always available
   const user = useAuthStore(state => state.user);
-  
+
   // Translation setup
   const { currentLanguage } = useLanguage();
-  
+
   const originalTexts = {
     paymentMethods: 'Payment Methods',
     cashOnDelivery: 'Cash on Delivery',
@@ -204,7 +205,7 @@ export default function PaymentMethods() {
           user_id: 'system',
           created_at: new Date().toISOString()
         };
-        
+
         await setDefaultMethod(codMethod);
       } else {
         await setDefaultMethod(method.id);
@@ -214,6 +215,29 @@ export default function PaymentMethods() {
       router.back();
     } catch (error) {
       console.error('Error selecting payment method:', error);
+    }
+  };
+
+  const handleRazorpaySelect = async () => {
+    try {
+      // Create a Razorpay payment method object
+      const razorpayMethod: PaymentMethod = {
+        id: 'razorpay',
+        type: 'razorpay',
+        title: 'Razorpay - Secure Payment Gateway',
+        is_default: true,
+        details: {
+          gateway: 'razorpay'
+        },
+        user_id: user?.id || 'system',
+        created_at: new Date().toISOString()
+      };
+
+      await setDefaultMethod(razorpayMethod);
+      router.back();
+    } catch (error) {
+      console.error('Error selecting Razorpay:', error);
+      Alert.alert('Error', 'Failed to select Razorpay payment method');
     }
   };
 
@@ -227,6 +251,55 @@ export default function PaymentMethods() {
 
   const handleUpiAppSelect = async (app: UpiApp) => {
     try {
+      if (!amount || amount <= 0) {
+        Alert.alert(t('paymentError'), t('amountNotSpecified'));
+        return;
+      }
+
+      // Set Razorpay as payment method
+      const razorpayMethod: PaymentMethod = {
+        id: 'razorpay',
+        type: 'razorpay',
+        title: `Razorpay - ${app.name}`,
+        is_default: true,
+        details: {
+          gateway: 'razorpay',
+          preferred_upi_app: app.id, // Store preferred app for reference
+        },
+        user_id: user?.id || 'system',
+        created_at: new Date().toISOString()
+      };
+
+      await setDefaultMethod(razorpayMethod);
+
+      // Get cart items to calculate amounts
+      const { items } = useCartStore.getState();
+      const subtotal = items.reduce((sum, item) => sum + (Number(item.price) * item.quantity), 0);
+      // For now, use amount as total (delivery fee should be calculated in checkout)
+      // If amount was passed from cart, it should include delivery fee
+      const total = amount;
+      const deliveryFee = Math.max(0, total - subtotal);
+
+      // Navigate directly to checkout with autoPay flag to open Razorpay immediately with UPI pre-selected
+      router.push({
+        pathname: '/(main)/checkout',
+        params: {
+          subtotal: subtotal.toString(),
+          deliveryFee: deliveryFee.toString(),
+          total: total.toString(),
+          autoPay: 'true', // Flag to auto-open Razorpay
+          preferredMethod: 'upi', // Pre-select UPI method
+        }
+      });
+    } catch (error) {
+      console.error('Error selecting UPI app through Razorpay:', error);
+      Alert.alert('Error', 'Failed to select payment method');
+    }
+  };
+
+  // Legacy function - kept for reference but now routes through Razorpay
+  const handleUpiAppSelectLegacy = async (app: UpiApp) => {
+    try {
       if (!amount) {
         Alert.alert(t('paymentError'), t('amountNotSpecified'));
         return;
@@ -234,23 +307,23 @@ export default function PaymentMethods() {
 
       const merchantId = "merchant" + Math.floor(Math.random() * 10000);
       const transactionId = "txn" + Date.now();
-      
+
       // Get UPI configuration from Supabase
       if (!upiConfig) {
         Alert.alert(t('configurationError'), t('upiConfigNotAvailable'));
         return;
       }
-      
+
       const merchantName = upiConfig.merchant_name;
       const upiId = upiConfig.upi_id;
-      
+
       // Google Pay specific implementation
       if (app.id === 'gpay') {
         const currencyCode = "INR";
-        
+
         if (Platform.OS === 'android') {
           // For Android, follow the official Google Pay API structure
-          
+
           // 1. First try the most reliable method - tez:// URI scheme
           try {
             // According to Google Pay docs, the preferred format for tez:// scheme
@@ -260,7 +333,7 @@ export default function PaymentMethods() {
             return;
           } catch (err) {
             console.log('Failed primary Google Pay method, trying alternative...', err);
-            
+
             // 2. Try the intent URL approach with package name (alternative method)
             try {
               const intentUrl = `intent://pay?pa=${upiId}&pn=${merchantName}&am=${amount}&cu=${currencyCode}&tr=${transactionId}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
@@ -268,7 +341,7 @@ export default function PaymentMethods() {
               return;
             } catch (err2) {
               console.log('Failed intent URL method, trying generic UPI...', err2);
-              
+
               // 3. Try generic UPI intent as last resort
               try {
                 // Standard UPI deep link format that other UPI apps can handle
@@ -277,10 +350,10 @@ export default function PaymentMethods() {
                 return;
               } catch (err3) {
                 console.log('All Google Pay methods failed:', err3);
-                
+
                 // Show detailed error with install option
                 Alert.alert(
-                  t('googlePayError'), 
+                  t('googlePayError'),
                   t('unableToOpenGooglePay'),
                   [
                     {
@@ -302,11 +375,11 @@ export default function PaymentMethods() {
           }
         } else {
           // iOS handling - Google Pay on iOS follows different patterns
-          
+
           // First check if Google Pay is installed at all
           try {
             const isGpayInstalled = await Linking.canOpenURL('gpay://');
-            
+
             if (isGpayInstalled) {
               // 1. Try the official iOS Google Pay scheme for UPI
               // According to docs, gpay:// is the main scheme for iOS
@@ -317,24 +390,24 @@ export default function PaymentMethods() {
             } else {
               // App is not installed, offer to install
               Alert.alert(
-                 t('googlePayNotInstalled'),
-                 t('googlePayRequired'),
-                 [
-                   {
-                     text: t('cancel'),
-                     style: 'cancel'
-                   },
-                   {
-                     text: t('installFromAppStore'),
-                     onPress: () => Linking.openURL('https://apps.apple.com/in/app/google-pay-save-pay-manage/id1193357041')
-                   }
-                 ]
-               );
+                t('googlePayNotInstalled'),
+                t('googlePayRequired'),
+                [
+                  {
+                    text: t('cancel'),
+                    style: 'cancel'
+                  },
+                  {
+                    text: t('installFromAppStore'),
+                    onPress: () => Linking.openURL('https://apps.apple.com/in/app/google-pay-save-pay-manage/id1193357041')
+                  }
+                ]
+              );
               return;
             }
           } catch (err) {
             console.log('Failed to check or open Google Pay on iOS:', err);
-            
+
             // Try alternative Google Pay URI schemes as fallback
             try {
               // Try alternative scheme
@@ -343,28 +416,28 @@ export default function PaymentMethods() {
               return;
             } catch (err2) {
               console.log('All iOS Google Pay methods failed:', err2);
-              
+
               // Offer to install or try another payment method
               Alert.alert(
-                 t('paymentError'),
-                 t('couldNotOpenGooglePay'),
-                 [
-                   {
-                     text: t('tryAnotherMethod'),
-                     style: 'cancel'
-                   },
-                   {
-                     text: t('installGooglePay'),
-                     onPress: () => Linking.openURL('https://apps.apple.com/in/app/google-pay-save-pay-manage/id1193357041')
-                   }
-                 ]
-               );
+                t('paymentError'),
+                t('couldNotOpenGooglePay'),
+                [
+                  {
+                    text: t('tryAnotherMethod'),
+                    style: 'cancel'
+                  },
+                  {
+                    text: t('installGooglePay'),
+                    onPress: () => Linking.openURL('https://apps.apple.com/in/app/google-pay-save-pay-manage/id1193357041')
+                  }
+                ]
+              );
             }
           }
         }
         return;
       }
-      
+
       // Handle other UPI apps (PhonePe, Paytm, BHIM)
       if (Platform.OS === 'android') {
         // Try opening the specific app with explicit package
@@ -373,16 +446,16 @@ export default function PaymentMethods() {
           await Linking.openURL(`${app.packageName}://upi/pay?${upiParams}`);
         } catch (err) {
           console.error(`Failed to open ${app.name} with package scheme:`, err);
-            
-            // If app-specific intent fails, try generic UPI intent
+
+          // If app-specific intent fails, try generic UPI intent
           try {
             const genericUrl = `upi://pay?pa=${upiId}&pn=${merchantName}&am=${amount}&cu=INR&tr=${transactionId}`;
             await Linking.openURL(genericUrl);
           } catch (err2) {
-              console.error('Failed to open generic UPI intent:', err2);
-              Alert.alert(
-                t('appNotFound'), 
-                `${app.name} ${t('appNotInstalled')}`,
+            console.error('Failed to open generic UPI intent:', err2);
+            Alert.alert(
+              t('appNotFound'),
+              `${app.name} ${t('appNotInstalled')}`,
               [
                 {
                   text: t('ok'),
@@ -405,7 +478,7 @@ export default function PaymentMethods() {
         // For iOS, use appropriate payment app URL schemes
         let iosUpiUrl = '';
         let appStoreUrl = '';
-        
+
         // Construct platform-specific payment URLs with the UPI ID
         switch (app.id) {
           case 'phonepe':
@@ -425,11 +498,11 @@ export default function PaymentMethods() {
             iosUpiUrl = `upi://pay?pa=${upiId}&pn=${merchantName}&am=${amount}&cu=INR&tr=${transactionId}`;
             break;
         }
-        
+
         // Check if app is installed
         try {
           const canOpen = await Linking.canOpenURL(app.uriScheme);
-          
+
           if (canOpen) {
             // The app is installed, try opening it with the payment URL
             await Linking.openURL(iosUpiUrl);
@@ -474,6 +547,8 @@ export default function PaymentMethods() {
         return 'bank';
       case 'cod':
         return 'cash';
+      case 'razorpay':
+        return 'shield-checkmark';
       default:
         return 'help-circle';
     }
@@ -489,6 +564,8 @@ export default function PaymentMethods() {
         return `${method.details.bank_name} Net Banking`;
       case 'cod':
         return t('cashOnDelivery');
+      case 'razorpay':
+        return 'Razorpay - Secure Payment Gateway';
       default:
         return method.title;
     }
@@ -496,99 +573,143 @@ export default function PaymentMethods() {
 
   return (
     <SafeAreaView style={styles.safeContainer}>
-      <SystemStatusBar style="dark" backgroundColor="#fff" />
-      
+      <SystemStatusBar style="dark" backgroundColor="#F8F9FA" />
+
       <View style={styles.container}>
         <View style={styles.header}>
-          <IconButton
-            icon="arrow-left"
-            onPress={() => router.back()}
-            size={24}
-          />
+          <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
+            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
+          </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('paymentMethods')}</Text>
-          <IconButton
-            icon="plus"
-            onPress={() => router.push('/(main)/payment/add')}
-            size={24}
-          />
+          <TouchableOpacity onPress={() => router.push('/(main)/payment/add')} style={styles.headerButton}>
+            <Ionicons name="add" size={24} color="#FF7D00" />
+          </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.content}>
+        <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
           {/* Cash on Delivery Option */}
-          <Card style={styles.card} onPress={() => handleMethodSelect('cod')}>
-            <List.Item
-              title={t('cashOnDelivery')}
-              description={t('payWhenReceive')}
-              left={props => <List.Icon {...props} icon="cash" />}
-              right={props => (
-                <IconButton
-                  {...props}
-                  icon={codEnabled ? "check-circle" : "check-circle-outline"}
-                  iconColor={codEnabled ? "#2196F3" : "#666"}
-                />
-              )}
-            />
-          </Card>
-          
-          {/* UPI Apps Section */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>{t('cashOnDelivery')}</Text>
+            <TouchableOpacity
+              style={[styles.methodCard, codEnabled && styles.selectedCard]}
+              onPress={() => handleMethodSelect('cod')}
+              activeOpacity={0.7}
+            >
+              <View style={styles.iconContainer}>
+                <Ionicons name="cash-outline" size={24} color="#FF7D00" />
+              </View>
+              <View style={styles.methodInfo}>
+                <Text style={styles.methodTitle}>{t('cashOnDelivery')}</Text>
+                <Text style={styles.methodDescription}>{t('payWhenReceive')}</Text>
+              </View>
+              <View style={styles.radioButton}>
+                {codEnabled && <View style={styles.radioButtonSelected} />}
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Razorpay Payment Gateway */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Secure Payment Gateway</Text>
+            <TouchableOpacity
+              style={styles.methodCard}
+              onPress={() => handleRazorpaySelect()}
+              activeOpacity={0.7}
+            >
+              <View style={styles.iconContainer}>
+                <Ionicons name="shield-checkmark-outline" size={24} color="#3395FF" />
+              </View>
+              <View style={styles.methodInfo}>
+                <Text style={styles.methodTitle}>Razorpay</Text>
+                <Text style={styles.methodDescription}>Pay securely with UPI, Cards, Net Banking & more</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          </View>
+
+          {/* UPI Apps Section - Routes through Razorpay */}
           {amount > 0 && (
-            <>
+            <View style={styles.sectionContainer}>
               <Text style={styles.sectionTitle}>{t('payWithUpiApps')}</Text>
-              <View style={styles.upiAppsContainer}>
+              <Text style={styles.sectionSubtitle}>
+                Select your preferred UPI app. Payment will be processed securely through Razorpay.
+              </Text>
+              <View style={styles.upiGrid}>
                 {upiApps.map((app) => (
-                  <Card 
-                    key={app.id} 
-                    style={styles.upiAppCard}
+                  <TouchableOpacity
+                    key={app.id}
+                    style={styles.upiCard}
                     onPress={() => handleUpiAppSelect(app)}
+                    activeOpacity={0.7}
                   >
-                    <View style={styles.upiAppContent}>
-                      <Image 
-                        source={{ uri: app.icon }} 
-                        style={styles.upiAppIcon} 
+                    <View style={styles.upiIconWrapper}>
+                      <Image
+                        source={{ uri: app.icon }}
+                        style={styles.upiAppIcon}
                         resizeMode="contain"
                       />
-                      <Text style={styles.upiAppName}>{app?.name || 'UPI App'}</Text>
                     </View>
-                  </Card>
+                    <Text style={styles.upiAppName}>{app.name}</Text>
+                    <Text style={styles.upiAppSubtext}>Via Razorpay</Text>
+                  </TouchableOpacity>
                 ))}
               </View>
-              <Divider style={styles.divider} />
-            </>
+            </View>
           )}
 
-          <Text style={styles.sectionTitle}>{t('savedCardsUpi')}</Text>
-
-          {paymentMethods.map((method) => (
-            <Card 
-              key={method.id} 
-              style={styles.card}
-              onPress={() => handleMethodSelect(method)}
-            >
-              <List.Item
-                title={renderPaymentMethodTitle(method)}
-                description={method.is_default ? t('defaultPaymentMethod') : ''}
-                left={props => <List.Icon {...props} icon={renderPaymentMethodIcon(method.type)} />}
-                right={props => (
-                  <View style={styles.actions}>
-                    <IconButton
-                      {...props}
-                      icon={method.is_default ? "check-circle" : "check-circle-outline"}
-                      iconColor={method.is_default ? "#2196F3" : "#666"}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>{t('savedCardsUpi')}</Text>
+            {paymentMethods.length > 0 ? (
+              paymentMethods.map((method) => (
+                <TouchableOpacity
+                  key={method.id}
+                  style={[styles.methodCard, method.is_default && styles.selectedCard]}
+                  onPress={() => handleMethodSelect(method)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.iconContainer}>
+                    <Ionicons
+                      name={
+                        method.type === 'upi' ? 'qr-code-outline' :
+                          method.type === 'card' ? 'card-outline' : 'business-outline'
+                      }
+                      size={24}
+                      color={method.is_default ? '#FF7D00' : '#666'}
                     />
-                    <IconButton
-                      {...props}
-                      icon="delete-outline"
+                  </View>
+                  <View style={styles.methodInfo}>
+                    <Text style={[styles.methodTitle, method.is_default && styles.selectedText]}>
+                      {renderPaymentMethodTitle(method)}
+                    </Text>
+                    {method.is_default && (
+                      <Text style={styles.defaultBadge}>{t('defaultPaymentMethod')}</Text>
+                    )}
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
                       onPress={(e) => {
                         e.stopPropagation();
                         setSelectedMethod(method);
                         setDeleteModalVisible(true);
                       }}
-                    />
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#FF5252" />
+                    </TouchableOpacity>
+                    <View style={styles.radioButton}>
+                      {method.is_default && <View style={styles.radioButtonSelected} />}
+                    </View>
                   </View>
-                )}
-              />
-            </Card>
-          ))}
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <Ionicons name="wallet-outline" size={48} color="#DDD" />
+                <Text style={styles.emptyText}>No saved payment methods</Text>
+              </View>
+            )}
+          </View>
         </ScrollView>
       </View>
 
@@ -598,24 +719,31 @@ export default function PaymentMethods() {
           onDismiss={() => setDeleteModalVisible(false)}
           contentContainerStyle={styles.modalContent}
         >
-          <Text variant="titleMedium" style={styles.modalTitle}>
-            {t('deletePaymentMethod')}
-          </Text>
+          <View style={styles.modalHeader}>
+            <View style={styles.modalIconContainer}>
+              <Ionicons name="warning-outline" size={32} color="#FF5252" />
+            </View>
+            <Text style={styles.modalTitle}>{t('deletePaymentMethod')}</Text>
+          </View>
+
           <Text style={styles.modalText}>
             {t('deleteConfirmation')}
           </Text>
+
           <View style={styles.modalActions}>
-            <Button 
-              mode="outlined" 
+            <Button
+              mode="outlined"
               onPress={() => setDeleteModalVisible(false)}
-              style={styles.modalButton}
+              style={styles.modalCancelButton}
+              labelStyle={styles.modalCancelLabel}
             >
               {t('cancel')}
             </Button>
-            <Button 
-              mode="contained" 
+            <Button
+              mode="contained"
               onPress={handleDelete}
-              style={styles.modalButton}
+              style={styles.modalDeleteButton}
+              labelStyle={styles.modalDeleteLabel}
             >
               {t('delete')}
             </Button>
@@ -629,90 +757,246 @@ export default function PaymentMethods() {
 const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#F8F9FA',
   },
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#F0F0F0',
+  },
+  headerButton: {
+    padding: 8,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    flex: 1,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    letterSpacing: -0.5,
   },
   content: {
-    padding: 16,
+    flex: 1,
   },
-  card: {
-    marginBottom: 12,
-    elevation: 2,
-  },
-  actions: {
-    flexDirection: 'row',
-  },
-  modalContent: {
-    backgroundColor: 'white',
+  scrollContent: {
     padding: 20,
-    margin: 20,
-    borderRadius: 8,
+    paddingBottom: 40,
   },
-  modalTitle: {
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  modalText: {
-    textAlign: 'center',
+  sectionContainer: {
     marginBottom: 24,
-    color: '#666',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  modalButton: {
-    minWidth: 100,
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    marginTop: 16,
-    marginBottom: 8,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 12,
+    marginLeft: 4,
   },
-  upiAppsContainer: {
+  methodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  selectedCard: {
+    borderColor: '#FF7D00',
+    backgroundColor: '#FFF8F0',
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FAFAFA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  methodInfo: {
+    flex: 1,
+  },
+  methodTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  selectedText: {
+    color: '#FF7D00',
+  },
+  methodDescription: {
+    fontSize: 13,
+    color: '#888',
+  },
+  defaultBadge: {
+    fontSize: 12,
+    color: '#FF7D00',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  radioButton: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#E0E0E0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12,
+  },
+  radioButtonSelected: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FF7D00',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deleteButton: {
+    padding: 8,
+    marginRight: 4,
+  },
+
+  // UPI Apps Grid
+  upiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    gap: 12,
   },
-  upiAppCard: {
+  upiCard: {
     width: '48%',
-    marginBottom: 8,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
     elevation: 2,
   },
-  upiAppContent: {
-    padding: 12,
+  upiIconWrapper: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
     alignItems: 'center',
-  },
-  upiAppIcon: {
-    width: 42,
-    height: 42,
     marginBottom: 8,
   },
+  upiAppIcon: {
+    width: 40,
+    height: 40,
+  },
   upiAppName: {
-    fontSize: 12,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  upiAppSubtext: {
+    fontSize: 11,
+    color: '#999',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 12,
+    lineHeight: 18,
+  },
+
+  // Empty State
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EFEFEF',
+    borderStyle: 'dashed',
+  },
+  emptyText: {
+    marginTop: 12,
+    color: '#999',
+    fontSize: 14,
+  },
+
+  // Modal Styles
+  modalContent: {
+    backgroundColor: 'white',
+    padding: 24,
+    margin: 24,
+    borderRadius: 24,
+    elevation: 5,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FFEBEE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A1A1A',
     textAlign: 'center',
   },
-  divider: {
-    marginVertical: 8,
+  modalText: {
+    textAlign: 'center',
+    marginBottom: 32,
+    color: '#666',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    borderColor: '#DDD',
+    borderRadius: 12,
+  },
+  modalCancelLabel: {
+    color: '#666',
+    fontWeight: '600',
+  },
+  modalDeleteButton: {
+    flex: 1,
+    backgroundColor: '#FF5252',
+    borderRadius: 12,
+  },
+  modalDeleteLabel: {
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
 });

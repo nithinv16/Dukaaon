@@ -12,7 +12,7 @@ import { getProductImage } from '../../../../constants/categoryImages';
 import ProductImage from '../../../../components/common/ProductImage';
 import { WHOLESALER_COLORS } from '../../../../constants/colors';
 import { useEdgeToEdge, getSafeAreaStyles } from '../../../../utils/android15EdgeToEdge';
-import SupabaseService from '../../../../services/SupabaseService';
+import { uploadProductImage } from '../../../../services/supabase/supabase';
 import { useLanguage } from '../../../../contexts/LanguageContext';
 import { translationService } from '../../../../services/translationService';
 
@@ -53,6 +53,8 @@ export default function EditProduct() {
   const [image, setImage] = useState<string | null>(null);
   const [imageChanged, setImageChanged] = useState(false);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [additionalImages, setAdditionalImages] = useState<Array<{ uri: string; base64: string; id: string }>>([]);
+  const [existingMedia, setExistingMedia] = useState<Array<{ id: string; media_url: string; display_order: number }>>([]);
   const [errors, setErrors] = useState<Partial<ProductForm>>({});
   const [loading, setLoading] = useState(false);
   const [translations, setTranslations] = useState({
@@ -172,6 +174,17 @@ export default function EditProduct() {
         if (product.image_url) {
           setImage(product.image_url.replace('http://', 'https://'));
         }
+
+        // Fetch existing product media
+        const { data: media, error: mediaError } = await supabase
+          .from('product_media')
+          .select('id, media_url, display_order')
+          .eq('product_id', id)
+          .order('display_order');
+
+        if (!mediaError && media) {
+          setExistingMedia(media);
+        }
       }
     } catch (error) {
       console.error('Error fetching product:', error);
@@ -220,6 +233,7 @@ export default function EditProduct() {
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
+        allowsMultipleSelection: false,
       });
 
       if (!result.canceled && result.assets[0]) {
@@ -243,10 +257,54 @@ export default function EditProduct() {
     }
   };
 
+  const pickMultipleImages = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.granted === false) {
+        alert(translations.cameraPermissionRequired);
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+        selectionLimit: 10,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        const processedImages = await Promise.all(
+          result.assets.map(async (asset) => {
+            const manipulatedImage = await ImageManipulator.manipulateAsync(
+              asset.uri,
+              [{ resize: { width: 2000, height: 2000 } }],
+              { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+            );
+            
+            return {
+              uri: manipulatedImage.uri,
+              base64: manipulatedImage.base64 || '',
+              id: `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            };
+          })
+        );
+        
+        setAdditionalImages(prev => [...prev, ...processedImages]);
+      }
+    } catch (error) {
+      console.error('Error picking multiple images:', error);
+      alert(translations.cameraPermissionRequired);
+    }
+  };
+
+  const removeAdditionalImage = (id: string) => {
+    setAdditionalImages(prev => prev.filter(img => img.id !== id));
+  };
+
   const uploadImage = async (base64Image: string) => {
     try {
-      // Use the SupabaseService to upload the product image
-      const { success, publicUrl, error } = await SupabaseService.uploadProductImage(
+      // Use the uploadProductImage function to upload the product image
+      const { success, publicUrl, error } = await uploadProductImage(
         user?.id || '',
         base64Image,
         id
@@ -261,6 +319,49 @@ export default function EditProduct() {
       return finalUrl;
     } catch (error) {
       console.error('Error uploading image:', error);
+      throw error;
+    }
+  };
+
+  const uploadProductMedia = async (productId: string, images: Array<{ uri: string; base64: string }>, startOrder: number) => {
+    try {
+      const mediaPromises = images.map(async (img, index) => {
+        const { success, publicUrl, error } = await uploadProductImage(
+          user?.id || '',
+          img.uri,
+          productId,
+          img.base64
+        );
+
+        if (!success || !publicUrl) {
+          console.error('Failed to upload media:', error);
+          return null;
+        }
+
+        const { data, error: mediaError } = await supabase
+          .from('product_media')
+          .insert({
+            product_id: productId,
+            media_type: 'image',
+            media_url: publicUrl.replace('http://', 'https://'),
+            display_order: startOrder + index,
+            is_primary: false,
+          })
+          .select()
+          .single();
+
+        if (mediaError) {
+          console.error('Error inserting product media:', mediaError);
+          return null;
+        }
+
+        return data;
+      });
+
+      const results = await Promise.all(mediaPromises);
+      return results.filter(Boolean);
+    } catch (error) {
+      console.error('Error uploading product media:', error);
       throw error;
     }
   };
@@ -296,10 +397,23 @@ export default function EditProduct() {
 
       if (error) throw error;
 
+      // Upload additional images if any
+      if (additionalImages.length > 0) {
+        try {
+          const maxOrder = existingMedia.length > 0 
+            ? Math.max(...existingMedia.map(m => m.display_order)) + 1 
+            : 1;
+          await uploadProductMedia(id, additionalImages, maxOrder);
+        } catch (mediaError) {
+          console.error('Error uploading additional images:', mediaError);
+          // Don't fail the entire operation
+        }
+      }
+
       router.back();
     } catch (err) {
       console.error('Error updating product:', err);
-      // Handle error appropriately
+      Alert.alert('Error', 'Failed to update product. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -323,6 +437,7 @@ export default function EditProduct() {
         <ScrollView style={styles.content}>
           {/* Image Upload */}
           <View style={styles.imageSection}>
+            <Text style={styles.sectionLabel}>Main Product Image *</Text>
             {image ? (
               <ProductImage
                 imageUrl={image}
@@ -346,6 +461,60 @@ export default function EditProduct() {
             >
               {translations.changeImage}
             </Button>
+
+            {/* Additional Images Section */}
+            <View style={styles.additionalImagesSection}>
+              <Text style={styles.sectionLabel}>Additional Product Photos (Optional)</Text>
+              
+              {/* Show existing media */}
+              {existingMedia.length > 0 && (
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.additionalImagesScroll}
+                >
+                  {existingMedia.map((media) => (
+                    <View key={media.id} style={styles.additionalImageContainer}>
+                      <Image source={{ uri: media.media_url }} style={styles.additionalImage} />
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+
+              <Button
+                mode="outlined"
+                icon="image-multiple"
+                onPress={pickMultipleImages}
+                style={styles.addMoreButton}
+              >
+                Add More Photos ({additionalImages.length})
+              </Button>
+
+              {additionalImages.length > 0 && (
+                <ScrollView 
+                  horizontal 
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.additionalImagesScroll}
+                >
+                  {additionalImages.map((img) => (
+                    <View key={img.id} style={styles.additionalImageContainer}>
+                      <Image source={{ uri: img.uri }} style={styles.additionalImage} />
+                      <TouchableOpacity
+                        style={styles.removeImageButton}
+                        onPress={() => removeAdditionalImage(img.id)}
+                      >
+                        <IconButton
+                          icon="close-circle"
+                          size={24}
+                          iconColor="#FF4444"
+                          style={styles.removeIcon}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
           </View>
 
           {/* Product Details Form */}
@@ -512,6 +681,44 @@ const styles = StyleSheet.create({
   },
   changeImage: {
     marginTop: 8,
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+    color: '#333',
+  },
+  additionalImagesSection: {
+    marginTop: 24,
+    width: '100%',
+  },
+  addMoreButton: {
+    marginBottom: 12,
+  },
+  additionalImagesScroll: {
+    marginTop: 8,
+  },
+  additionalImageContainer: {
+    position: 'relative',
+    marginRight: 12,
+    width: 100,
+    height: 100,
+  },
+  additionalImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  removeIcon: {
+    margin: 0,
   },
   input: {
     marginTop: 12,

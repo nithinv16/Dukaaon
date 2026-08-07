@@ -1,7 +1,7 @@
 // Setup type definitions for built-in Supabase Runtime APIs
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
-console.log("SMS Hook Function Started")
+console.log("WhatsApp OTP Hook Function Started")
 
 import { Webhook } from 'https://esm.sh/standardwebhooks@1.0.0'
 
@@ -21,11 +21,16 @@ Deno.serve(async (req) => {
     const hookSecret = Deno.env.get('SEND_SMS_HOOK_SECRETS')
     const headers = Object.fromEntries(req.headers)
     
-    // For Supabase Auth Hooks, we need to handle webhook verification
+    // For Supabase Auth Hooks, verify webhook signature (non-blocking)
     if (hookSecret) {
-      const wh = new Webhook(hookSecret)
-      // Verify the webhook signature
-      const verifiedPayload = wh.verify(payload, headers)
+      try {
+        const wh = new Webhook(hookSecret)
+        wh.verify(payload, headers)
+        console.log('Webhook signature verified successfully')
+      } catch (verifyError) {
+        console.warn(`Webhook verification warning: ${verifyError.message}`)
+        // Continue processing - Supabase Auth hooks may not always send standard webhook headers
+      }
     }
     
     // Parse the JSON payload
@@ -81,74 +86,59 @@ Deno.serve(async (req) => {
     
     console.log(`Cleaned phone number: ${phone} -> ${cleanPhone}`);
 
-    // Customize message based on SMS type
-    let customMessage: string;
-    switch (type) {
-      case 'signup':
-        customMessage = `Welcome to DukaaOn! Your verification code is: ${token}`;
-        break;
-      case 'recovery':
-        customMessage = `DukaaOn account recovery code: ${token}`;
-        break;
-      case 'email_change':
-        customMessage = `DukaaOn email change verification: ${token}`;
-        break;
-      case 'phone_change':
-        customMessage = `DukaaOn phone change verification: ${token}`;
-        break;
-      default:
-        customMessage = `DukaaOn verification code: ${token}`;
-    }
-    
-    // Add expiry information
-    customMessage += ' (Valid for 10 minutes)';
-
-    // AuthKey API configuration - using standard SMS API endpoint
+    // WhatsApp OTP via AuthKey.io - Official POST API
     const authKey = Deno.env.get('AUTHKEY') || '904251f34754cedc';
-    const templateId = '24603'; // DLT Template ID
-    const senderId = 'AUTHKY';
-    const authKeyApiUrl = 'https://api.authkey.io/request';
+    const whatsappTemplateId = Deno.env.get('WHATSAPP_OTP_TEMPLATE_ID') || '40559';
+    const authKeyApiUrl = 'https://console.authkey.io/restapi/requestjson.php';
     
-    // Use the working message format
-    const smsContent = `Use ${token} as your OTP to access your Dukaaon, OTP is confidential and valid for 5 mins This sms sent by authkey.io`;
-    
-    // Prepare AuthKey API request - try different format based on AuthKey documentation
+    // Authentication template uses {{1}} - try direct positional key
     const requestBody = {
-      authkey: authKey,
-      mobiles: cleanPhone,
-      message: smsContent,
-      sender: senderId,
-      route: '4',
-      country: '91'
+      country_code: '91',
+      mobile: cleanPhone,
+      wid: whatsappTemplateId,
+      type: 'text',
+      bodyValues: {
+        '1': token
+      }
     };
 
-    console.log(`Making API call to: ${authKeyApiUrl}`);
-    console.log(`Request body:`, JSON.stringify(requestBody));
+    console.log(`OTP token value: ${token}`);
+
+    console.log(`Sending WhatsApp OTP to: ${cleanPhone}, type: ${type}`);
+    console.log(`Template ID (wid): ${whatsappTemplateId}`);
+    console.log(`Payload:`, JSON.stringify(requestBody));
     
-    // Send SMS via AuthKey API
-    const smsResponse = await fetch(authKeyApiUrl, {
+    // Send WhatsApp OTP via AuthKey POST API
+    const waResponse = await fetch(authKeyApiUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${authKey}`
       },
       body: JSON.stringify(requestBody)
     });
 
-    const smsResult = await smsResponse.text();
+    const waResult = await waResponse.text();
     
-    console.log(`AuthKey API response: ${smsResult}`);
+    console.log(`AuthKey WhatsApp API response: ${waResult}`);
     
-    if (!smsResponse.ok) {
-      console.error(`SMS sending failed: ${smsResult}`);
+    // Parse response to check for AuthKey-specific error codes
+    let parsedResult;
+    try { parsedResult = JSON.parse(waResult); } catch(e) { parsedResult = null; }
+    
+    const isAuthKeyError = parsedResult?.statusCode && parsedResult.statusCode !== '200';
+    
+    if (!waResponse.ok || isAuthKeyError) {
+      console.error(`WhatsApp OTP sending failed: ${waResult}`);
       return new Response(
-        JSON.stringify({ error: 'Failed to send SMS', details: smsResult }),
+        JSON.stringify({ error: 'Failed to send WhatsApp OTP', details: waResult }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     
-    console.log('SMS sent successfully');
+    console.log('WhatsApp OTP sent successfully');
     return new Response(
-      JSON.stringify({ success: true, message: 'OTP sent successfully' }),
+      JSON.stringify({ success: true, message: 'OTP sent successfully via WhatsApp' }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
     

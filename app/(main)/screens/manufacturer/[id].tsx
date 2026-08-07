@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ScrollView, Image, ActivityIndicator, Linking, Platform } from 'react-native';
 import { Text, Card, Button, Chip, Divider } from 'react-native-paper';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '../../../../services/supabase/supabase';
 import * as Location from 'expo-location';
+import MapView, { Marker } from 'react-native-maps';
 
 // Define types
 interface ManufacturerProfile {
@@ -23,6 +24,7 @@ interface ManufacturerProfile {
 
 export default function ManufacturerDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const [manufacturer, setManufacturer] = useState<ManufacturerProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [distance, setDistance] = useState<number | null>(null);
@@ -38,7 +40,7 @@ export default function ManufacturerDetails() {
     setLoading(true);
     try {
       console.log('Fetching manufacturer details for ID:', id);
-      
+
       // Try to get from seller_details first
       const { data: sellerData, error: sellerError } = await supabase
         .from('seller_details')
@@ -46,14 +48,14 @@ export default function ManufacturerDetails() {
         .eq('user_id', id)
         .eq('seller_type', 'manufacturer')
         .single();
-      
+
       if (sellerData) {
         console.log('Found manufacturer in seller_details:', sellerData);
         setManufacturer(sellerData);
         setLoading(false);
         return;
       }
-      
+
       // If not found in seller_details, check profiles table
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
@@ -61,15 +63,15 @@ export default function ManufacturerDetails() {
         .eq('id', id)
         .eq('role', 'manufacturer')
         .single();
-        
+
       if (profileError) {
         console.error('Error fetching manufacturer profile:', profileError);
         throw profileError;
       }
-      
+
       if (profileData) {
         console.log('Found manufacturer in profiles:', profileData);
-        
+
         // Transform profile data to the same format
         const transformed: ManufacturerProfile = {
           id: profileData.id,
@@ -83,7 +85,7 @@ export default function ManufacturerDetails() {
           longitude: profileData.longitude,
           categories: ['General'] // Default category
         };
-        
+
         setManufacturer(transformed);
       } else {
         console.log('No manufacturer found with ID:', id);
@@ -125,35 +127,35 @@ export default function ManufacturerDetails() {
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
     const R = 6371; // Radius of the earth in km
     const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1); 
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2)
-      ; 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+      ;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const d = R * c; // Distance in km
     return Math.round(d * 10) / 10;
   };
-  
+
   const deg2rad = (deg: number): number => {
-    return deg * (Math.PI/180);
+    return deg * (Math.PI / 180);
   };
 
   // Format address for display
   const formatAddress = (address: any): string => {
     if (!address) return 'Address not available';
-    
+
     if (typeof address === 'string') {
       return address;
     }
-    
+
     const parts = [];
     if (address.street) parts.push(address.street);
     if (address.city) parts.push(address.city);
     if (address.state) parts.push(address.state);
     if (address.pincode) parts.push(address.pincode);
-    
+
     return parts.length > 0 ? parts.join(', ') : 'Address not available';
   };
 
@@ -176,16 +178,16 @@ export default function ManufacturerDetails() {
 
   return (
     <ScrollView style={styles.container}>
-      <Stack.Screen 
+      <Stack.Screen
         options={{
           title: manufacturer.business_name || 'Manufacturer Profile',
         }}
       />
-      
+
       <View style={styles.header}>
-        <Image 
+        <Image
           source={
-            manufacturer.image_url 
+            manufacturer.image_url
               ? { uri: manufacturer.image_url }
               : require('../../../../assets/icons/seller_shop.jpg')
           }
@@ -193,19 +195,19 @@ export default function ManufacturerDetails() {
           resizeMode="cover"
         />
       </View>
-      
+
       <Card style={styles.profileCard}>
         <Card.Content>
           <Text variant="headlineSmall" style={styles.businessName}>
             {manufacturer.business_name}
           </Text>
-          
+
           {distance !== null && (
             <Chip style={styles.distanceChip} icon="map-marker-distance">
               {typeof distance === 'number' ? distance.toFixed(1) : parseFloat(distance) || 0} km away
             </Chip>
           )}
-          
+
           {manufacturer.categories && manufacturer.categories.length > 0 && (
             <View style={styles.categoriesContainer}>
               {manufacturer.categories.map((category, index) => (
@@ -213,23 +215,23 @@ export default function ManufacturerDetails() {
               ))}
             </View>
           )}
-          
+
           <Divider style={styles.divider} />
-          
+
           <View style={styles.infoRow}>
             <Text variant="bodyLarge" style={styles.infoLabel}>Owner:</Text>
             <Text variant="bodyLarge" style={styles.infoValue}>
               {manufacturer.owner_name || 'Not available'}
             </Text>
           </View>
-          
+
           <View style={styles.infoRow}>
             <Text variant="bodyLarge" style={styles.infoLabel}>Address:</Text>
             <Text variant="bodyLarge" style={styles.infoValue}>
               {formatAddress(manufacturer.address)}
             </Text>
           </View>
-          
+
           {manufacturer.contact_phone && (
             <View style={styles.infoRow}>
               <Text variant="bodyLarge" style={styles.infoLabel}>Contact:</Text>
@@ -238,68 +240,113 @@ export default function ManufacturerDetails() {
               </Text>
             </View>
           )}
-          
+
           <Divider style={styles.divider} />
-          
+
           <View style={styles.actionButtons}>
-            <Button 
-              mode="contained" 
-              icon="phone" 
+            <Button
+              mode="contained"
+              icon="phone"
               style={styles.actionButton}
-              onPress={() => {/* Handle call action */}}
+              onPress={() => {/* Handle call action */ }}
             >
               Call
             </Button>
-            <Button 
-              mode="contained" 
-              icon="message-text" 
+            <Button
+              mode="contained"
+              icon="message-text"
               style={styles.actionButton}
-              onPress={() => {/* Handle message action */}}
+              onPress={() => {/* Handle message action */ }}
             >
               Message
             </Button>
           </View>
         </Card.Content>
       </Card>
-      
+
       <Card style={styles.mapCard}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>Location</Text>
           <Text variant="bodyMedium">
             {formatAddress(manufacturer.address)}
           </Text>
-          
-          {/* Map placeholder - in a real app, replace with a map component */}
-          <View style={styles.mapPlaceholder}>
-            <Text>Map view would be displayed here</Text>
-          </View>
-          
-          <Button 
-            mode="outlined" 
-            icon="directions" 
+
+          {/* Map View - shows manufacturer location */}
+          {manufacturer.latitude && manufacturer.longitude ? (
+            <View style={styles.mapContainer}>
+              <MapView
+                style={styles.mapView}
+                initialRegion={{
+                  latitude: manufacturer.latitude,
+                  longitude: manufacturer.longitude,
+                  latitudeDelta: 0.01,
+                  longitudeDelta: 0.01,
+                }}
+                scrollEnabled={false}
+                zoomEnabled={false}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: manufacturer.latitude,
+                    longitude: manufacturer.longitude,
+                  }}
+                  title={manufacturer.business_name}
+                  description={formatAddress(manufacturer.address)}
+                />
+              </MapView>
+            </View>
+          ) : (
+            <View style={styles.mapPlaceholder}>
+              <Text>Location coordinates not available</Text>
+            </View>
+          )}
+
+          <Button
+            mode="outlined"
+            icon="directions"
             style={styles.directionsButton}
-            onPress={() => {/* Handle get directions action */}}
+            onPress={() => {
+              if (manufacturer.latitude && manufacturer.longitude) {
+                const scheme = Platform.select({
+                  ios: 'maps:',
+                  android: 'geo:',
+                });
+                const url = Platform.select({
+                  ios: `maps:?daddr=${manufacturer.latitude},${manufacturer.longitude}`,
+                  android: `geo:${manufacturer.latitude},${manufacturer.longitude}?q=${manufacturer.latitude},${manufacturer.longitude}(${encodeURIComponent(manufacturer.business_name || 'Manufacturer')})`,
+                });
+                if (url) {
+                  Linking.openURL(url).catch(() => {
+                    // Fallback to Google Maps URL
+                    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${manufacturer.latitude},${manufacturer.longitude}`);
+                  });
+                }
+              }
+            }}
           >
             Get Directions
           </Button>
         </Card.Content>
       </Card>
-      
+
       {/* Products section */}
       <Card style={styles.productsCard}>
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>Products</Text>
           <Text variant="bodyMedium">
-            Contact this manufacturer to get information about their manufacturing capabilities and products.
+            Browse products from this manufacturer.
           </Text>
-          
-          <Button 
-            mode="contained" 
-            icon="factory" 
+
+          <Button
+            mode="contained"
+            icon="shopping"
             style={styles.browseButton}
-            onPress={() => {/* Handle browse products action */}}
+            onPress={() => {
+              // Navigate to category screen with manufacturer's seller_id
+              router.push(`/(main)/screens/category/${manufacturer.user_id}`);
+            }}
           >
-            Explore Capabilities
+            Browse Products
           </Button>
         </Card.Content>
       </Card>
@@ -393,6 +440,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 16,
   },
+  mapContainer: {
+    height: 180,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginVertical: 16,
+  },
+  mapView: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
   directionsButton: {
     marginTop: 8,
   },
@@ -400,7 +458,7 @@ const styles = StyleSheet.create({
     margin: 16,
     borderRadius: 10,
     elevation: 2,
-    marginBottom: 24,
+    marginBottom: 100,
   },
   browseButton: {
     marginTop: 16,

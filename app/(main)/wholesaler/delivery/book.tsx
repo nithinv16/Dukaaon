@@ -55,9 +55,9 @@ export default function BookDelivery() {
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRetailer, setSelectedRetailer] = useState<Retailer | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [entryMode, setEntryMode] = useState<'select' | 'manual'>('select');
-  
+
   const [translations, setTranslations] = useState({
     bookDelivery: 'Book Delivery',
     selectRetailer: 'Select Retailer',
@@ -84,7 +84,7 @@ export default function BookDelivery() {
     deliveryBooked: 'Delivery booked successfully!',
     distance: 'Distance'
   });
-  
+
   const [form, setForm] = useState<DeliveryForm>({
     retailerId: '',
     date: '',
@@ -109,34 +109,34 @@ export default function BookDelivery() {
   useEffect(() => {
     const loadTranslations = async () => {
       if (currentLanguage === 'en') return;
-      
+
       try {
         const translatedTexts = await Promise.all([
-        translationService.translateText('Book Delivery', currentLanguage),
-        translationService.translateText('Select Retailer', currentLanguage),
-        translationService.translateText('Manual Entry', currentLanguage),
-        translationService.translateText('Search retailers...', currentLanguage),
-        translationService.translateText('No retailers found', currentLanguage),
-        translationService.translateText('Business Name', currentLanguage),
-        translationService.translateText('Address', currentLanguage),
-        translationService.translateText('Phone Number', currentLanguage),
-        translationService.translateText('Delivery Date', currentLanguage),
-        translationService.translateText('Delivery Time', currentLanguage),
-        translationService.translateText('Deliver Now', currentLanguage),
-        translationService.translateText('Notes', currentLanguage),
-        translationService.translateText('Amount to Collect', currentLanguage),
-        translationService.translateText('Book Delivery', currentLanguage),
-        translationService.translateText('Cancel', currentLanguage),
-        translationService.translateText('Loading...', currentLanguage),
-        translationService.translateText('Submitting...', currentLanguage),
-        translationService.translateText('An error occurred', currentLanguage),
-        translationService.translateText('Retry', currentLanguage),
-        translationService.translateText('Please select a retailer first', currentLanguage),
-        translationService.translateText('Please fill in all required fields', currentLanguage),
-        translationService.translateText('Please enter a valid amount', currentLanguage),
-        translationService.translateText('Delivery booked successfully!', currentLanguage),
-        translationService.translateText('Distance', currentLanguage)
-      ]);
+          translationService.translateText('Book Delivery', currentLanguage),
+          translationService.translateText('Select Retailer', currentLanguage),
+          translationService.translateText('Manual Entry', currentLanguage),
+          translationService.translateText('Search retailers...', currentLanguage),
+          translationService.translateText('No retailers found', currentLanguage),
+          translationService.translateText('Business Name', currentLanguage),
+          translationService.translateText('Address', currentLanguage),
+          translationService.translateText('Phone Number', currentLanguage),
+          translationService.translateText('Delivery Date', currentLanguage),
+          translationService.translateText('Delivery Time', currentLanguage),
+          translationService.translateText('Deliver Now', currentLanguage),
+          translationService.translateText('Notes', currentLanguage),
+          translationService.translateText('Amount to Collect', currentLanguage),
+          translationService.translateText('Book Delivery', currentLanguage),
+          translationService.translateText('Cancel', currentLanguage),
+          translationService.translateText('Loading...', currentLanguage),
+          translationService.translateText('Submitting...', currentLanguage),
+          translationService.translateText('An error occurred', currentLanguage),
+          translationService.translateText('Retry', currentLanguage),
+          translationService.translateText('Please select a retailer first', currentLanguage),
+          translationService.translateText('Please fill in all required fields', currentLanguage),
+          translationService.translateText('Please enter a valid amount', currentLanguage),
+          translationService.translateText('Delivery booked successfully!', currentLanguage),
+          translationService.translateText('Distance', currentLanguage)
+        ]);
 
         setTranslations({
           bookDelivery: translatedTexts[0].translatedText,
@@ -175,11 +175,11 @@ export default function BookDelivery() {
   const fetchRetailers = async () => {
     try {
       setLoading(true);
-      
+
       // Get current location
       const { status } = await Location.requestForegroundPermissionsAsync();
       let currentLocation = null;
-      
+
       if (status === 'granted') {
         const location = await Location.getCurrentPositionAsync({});
         currentLocation = {
@@ -187,7 +187,7 @@ export default function BookDelivery() {
           longitude: location.coords.longitude
         };
       }
-      
+
       // Fetch retailers from profiles table
       const { data, error } = await supabase
         .from('profiles')
@@ -195,16 +195,16 @@ export default function BookDelivery() {
         .eq('role', 'retailer');
 
       if (error) throw error;
-      
+
       if (data) {
         const formattedRetailers = data.map(profile => {
           const businessDetails = profile.business_details || {};
-          
+
           // Calculate distance if we have location data and retailer coordinates
           let distance = null;
-          if (currentLocation && 
-              profile.latitude !== null && 
-              profile.longitude !== null) {
+          if (currentLocation &&
+            profile.latitude !== null &&
+            profile.longitude !== null) {
             distance = calculateDistance(
               currentLocation.latitude,
               currentLocation.longitude,
@@ -212,7 +212,7 @@ export default function BookDelivery() {
               profile.longitude
             );
           }
-          
+
           return {
             id: profile.id,
             business_name: businessDetails.shopName || 'Unnamed Shop',
@@ -223,13 +223,13 @@ export default function BookDelivery() {
             distance
           };
         });
-        
+
         // Filter retailers to only include those within 50km
         const nearbyRetailers = formattedRetailers.filter(retailer => {
           // Include retailers without distance data or those within 50km
           return !retailer.distance || retailer.distance <= 50;
         });
-        
+
         // Sort by distance if available, putting null distances at the end
         const sortedRetailers = nearbyRetailers.sort((a, b) => {
           if (a.distance === null && b.distance === null) return 0;
@@ -237,7 +237,7 @@ export default function BookDelivery() {
           if (b.distance === null) return -1;
           return a.distance - b.distance;
         });
-        
+
         setRetailers(sortedRetailers);
       }
     } catch (error) {
@@ -252,17 +252,17 @@ export default function BookDelivery() {
     const R = 6371; // Radius of the earth in km
     const dLat = deg2rad(lat2 - lat1);
     const dLon = deg2rad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2); 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const distance = R * c; // Distance in km
     return distance;
   };
 
   const deg2rad = (deg: number) => {
-    return deg * (Math.PI/180);
+    return deg * (Math.PI / 180);
   };
 
   const toggleNow = () => {
@@ -278,15 +278,15 @@ export default function BookDelivery() {
     try {
       setSubmitting(true);
       setErrorMessage(null);
-      
+
       const now = new Date();
       // Add 2 hours to current time for estimated delivery
       const estimatedDeliveryTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
-      
+
       // Format the dates
       const estimatedTimeStr = estimatedDeliveryTime.toTimeString().split(' ')[0].substring(0, 5);
       const estimatedDateStr = estimatedDeliveryTime.toISOString().split('T')[0];
-      
+
       // Base delivery data
       const deliveryData: DeliveryData = {
         seller_id: user?.id,
@@ -299,7 +299,7 @@ export default function BookDelivery() {
         delivery_status: 'pending',
         amount_to_collect: form.amountToCollect ? parseFloat(form.amountToCollect) : null
       };
-      
+
       // Add retailer info based on entry mode
       if (entryMode === 'select' && selectedRetailer) {
         deliveryData.retailer_id = selectedRetailer.id;
@@ -354,11 +354,11 @@ export default function BookDelivery() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
-          icon="arrow-left" 
+        <IconButton
+          icon="arrow-left"
           iconColor={WHOLESALER_COLORS.background}
           size={24}
-          onPress={() => router.back()} 
+          onPress={() => router.back()}
         />
         <Text variant="titleLarge" style={[styles.headerTitle, { color: WHOLESALER_COLORS.background }]}>
           {translations.bookDelivery}
@@ -399,7 +399,7 @@ export default function BookDelivery() {
             </Text>
 
             <Text variant="titleMedium" style={styles.sectionTitle}>{translations.selectRetailer}</Text>
-            
+
             {loading ? (
               <ActivityIndicator style={styles.loader} />
             ) : retailers.length === 0 ? (
@@ -441,7 +441,7 @@ export default function BookDelivery() {
           // Manual retailer entry UI
           <>
             <Text variant="titleMedium" style={styles.sectionTitle}>Enter Retailer Details</Text>
-            
+
             <TextInput
               mode="outlined"
               label={translations.businessName}
@@ -453,7 +453,7 @@ export default function BookDelivery() {
               style={styles.input}
               placeholder="Enter business name"
             />
-            
+
             <TextInput
               mode="outlined"
               label={translations.address}
@@ -466,7 +466,7 @@ export default function BookDelivery() {
               placeholder="Enter address"
               multiline
             />
-            
+
             <TextInput
               mode="outlined"
               label={translations.phoneNumber}
@@ -486,12 +486,12 @@ export default function BookDelivery() {
         {(selectedRetailer || entryMode === 'manual') && (
           <>
             <Text variant="titleMedium" style={styles.sectionTitle}>Delivery Details</Text>
-            
+
             <View style={styles.nowContainer}>
               <Text>{translations.deliverNow}</Text>
               <Switch value={form.isNow} onValueChange={toggleNow} />
             </View>
-            
+
             {!form.isNow && (
               <>
                 <TextInput
@@ -514,7 +514,7 @@ export default function BookDelivery() {
                 />
               </>
             )}
-            
+
             <TextInput
               mode="outlined"
               label={translations.amountToCollect + " (Optional)"}
@@ -525,7 +525,7 @@ export default function BookDelivery() {
               placeholder="₹0.00"
               left={<TextInput.Affix text="₹" />}
             />
-            
+
             <TextInput
               mode="outlined"
               label={translations.notes}
@@ -550,7 +550,7 @@ export default function BookDelivery() {
           onPress={handleSubmit}
           disabled={
             submitting ||
-            (entryMode === 'select' && !selectedRetailer) || 
+            (entryMode === 'select' && !selectedRetailer) ||
             (entryMode === 'manual' && !form.manualRetailer.businessName) ||
             (!form.isNow && (!form.date || !form.time))
           }

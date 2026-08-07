@@ -10,13 +10,13 @@ import {
   Dimensions,
   ActivityIndicator,
   Platform,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Button, Card, Chip } from 'react-native-paper';
-import { AZURE_AI_CONFIG } from '../../config/azureAI';
 import LanguageDetectionService, { DetectedLanguage } from '../../services/azureAI/languageDetectionService';
 import { useTranslation } from '../../contexts/LanguageContext';
-import NativeAzureSpeechService from '../../services/azureAI/nativeAzureSpeechService';
+import { getNativeVoiceService, NativeVoiceService } from '../../services/voice/nativeVoiceService';
 
 // Import Expo Speech for React Native compatibility
 import * as Speech from 'expo-speech';
@@ -75,14 +75,11 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   const [detectedLanguages, setDetectedLanguages] = useState<DetectedLanguage[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string>('');
   const [showTranslation, setShowTranslation] = useState(false);
-  const [recordingService] = useState(() => new NativeAzureSpeechService(
-    AZURE_AI_CONFIG.speechKey,
-    AZURE_AI_CONFIG.speechRegion
-  ));
+  const [voiceService] = useState(() => getNativeVoiceService());
   const [pulseAnimation] = useState(new Animated.Value(1));
   const [waveAnimation] = useState(new Animated.Value(0));
   const [processingStep, setProcessingStep] = useState('');
-  const [azureServiceError, setAzureServiceError] = useState<string | null>(null);
+  const [serviceError, setServiceError] = useState<string | null>(null);
 
   // Supported languages for automatic detection
   const supportedLanguages = [
@@ -99,27 +96,14 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   ];
 
   useEffect(() => {
-    // Check Azure configuration on component mount
-    try {
-      if (!AZURE_AI_CONFIG.speechKey || !AZURE_AI_CONFIG.speechRegion) {
-        throw new Error('Azure Speech Service configuration missing');
-      }
-      setAzureServiceError(null);
-    } catch (error) {
-      setAzureServiceError(error instanceof Error ? error.message : 'Azure Speech Service configuration error');
-    }
+    // Native voice service is always available on device
+    setServiceError(null);
 
     return () => {
-      // Cleanup recording on unmount
-      if (recordingService.isCurrentlyRecording()) {
-        try {
-          recordingService.cleanup();
-        } catch (error) {
-          console.error('Error stopping recording:', error);
-        }
-      }
+      // Cancel any ongoing operations on unmount (don't destroy - it's a singleton)
+      voiceService.cancel();
     };
-  }, [recordingService]);
+  }, [voiceService]);
 
   const startPulseAnimation = () => {
     Animated.loop(
@@ -162,7 +146,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
 
   const analyzeIntent = (text: string, language: string): VoiceIntent => {
     const lowerText = text.toLowerCase();
-    
+
     // Order intent keywords by language
     const orderKeywords = {
       'en-US': ['order', 'buy', 'purchase', 'add to cart', 'i want', 'i need'],
@@ -192,7 +176,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
       const productName = words.slice(1).join(' '); // Assume product name comes after intent
       const quantityMatch = text.match(/(\d+)/);
       const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1;
-      
+
       return {
         intent: 'order',
         confidence: 0.8,
@@ -219,11 +203,11 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   };
 
   const startVoiceSearch = async () => {
-    // Check for Azure configuration errors first
-    if (azureServiceError) {
+    // Check for service errors first
+    if (serviceError) {
       Alert.alert(
         'Configuration Error',
-        azureServiceError + '\n\nPlease check your Azure Speech Service configuration.',
+        serviceError + '\n\nPlease check your voice service configuration.',
         [{ text: 'OK' }]
       );
       return;
@@ -250,14 +234,14 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
     } catch (error) {
       console.error('Failed to start voice search:', error);
       setProcessingStep('Error occurred');
-      
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      
+
       // Check for specific React Native compatibility issues
-      if (errorMessage.includes('Web Audio API') || 
-          errorMessage.includes('AudioContext') ||
-          errorMessage.includes('privAudioSource') ||
-          errorMessage.includes('microphone')) {
+      if (errorMessage.includes('Web Audio API') ||
+        errorMessage.includes('AudioContext') ||
+        errorMessage.includes('privAudioSource') ||
+        errorMessage.includes('microphone')) {
         Alert.alert(
           'Platform Compatibility Issue',
           'Speech recognition is not fully supported in this React Native environment. Please try using the web version of the app for optimal voice search functionality.',
@@ -270,7 +254,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
           [{ text: 'OK' }]
         );
       }
-      
+
       // Cleanup and reset state
       setTimeout(() => {
         cancelVoiceSearch();
@@ -284,7 +268,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
     }
 
     setProcessingStep('Starting web speech recognition...');
-    
+
     try {
       // Configure speech recognition
       SpeechRecognition.startListening({
@@ -292,7 +276,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
         interimResults: true,
         language: 'en-US' // Default language, can be made dynamic
       });
-      
+
       setProcessingStep('Listening...');
       console.log('Web speech recognition started successfully');
     } catch (error) {
@@ -303,33 +287,77 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
 
   const startReactNativeSpeechRecognition = async () => {
     setProcessingStep('Starting recording...');
-    
+
     try {
-      console.log('Using React Native Speech Service...');
-      console.log('Starting recording with language:', selectedLanguage || 'en-US');
-      
-      // Start recording
-      await recordingService.startRecording();
+      console.log('Using Native Device Speech Recognition...');
+      const language = selectedLanguage || 'en-US';
+      console.log('Starting speech recognition with language:', language);
+
       setProcessingStep('Listening... Speak now');
-      console.log('Recording started successfully');
-      
-      // Set a timeout to automatically stop recording after 30 seconds
+
+      // Start native speech recognition with callback
+      const started = await voiceService.startListening(
+        language,
+        // onResult callback - called when speech is recognized
+        (result) => {
+          console.log('Speech result:', result);
+          setRecognizedText(result.text);
+
+          if (result.isFinal && result.text.trim()) {
+            setProcessingStep('Processing result...');
+            setIsListening(false);
+            stopPulseAnimation();
+            stopWaveAnimation();
+            handleVoiceSearchResult(result.text);
+          }
+        },
+        // onError callback
+        (error) => {
+          console.error('Speech recognition error:', error);
+          setProcessingStep('Recognition failed');
+          setIsListening(false);
+          stopPulseAnimation();
+          stopWaveAnimation();
+        }
+      );
+
+      if (!started) {
+        throw new Error('Failed to start speech recognition');
+      }
+
+      console.log('Speech recognition started successfully');
+
+      // Set a timeout to automatically stop after 30 seconds
       setTimeout(() => {
-        if (recordingService.isCurrentlyRecording() && isListening) {
-          console.log('Auto-stopping recording after timeout');
+        if (voiceService.isCurrentlyListening() && isListening) {
+          console.log('Auto-stopping speech recognition after timeout');
           stopVoiceSearch();
         }
-      }, 30000); // 30 seconds timeout
-      
+      }, 30000);
+
     } catch (error) {
-      console.error('Failed to start recording:', error);
-      setProcessingStep('Failed to start recording');
-      
+      console.error('Failed to start speech recognition:', error);
+      setProcessingStep('Failed to start');
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isPermissionError = errorMessage.toLowerCase().includes('permission');
+
       Alert.alert(
-        'Recording Error',
-        `Failed to start recording: ${errorMessage}. Please check microphone permissions.`,
-        [{ text: 'OK', onPress: () => cancelVoiceSearch() }]
+        'Speech Recognition Error',
+        isPermissionError
+          ? 'Microphone permission is required for voice search. Please enable it in your device settings.'
+          : `Failed to start speech recognition: ${errorMessage}`,
+        isPermissionError
+          ? [
+            { text: 'Cancel', onPress: () => cancelVoiceSearch(), style: 'cancel' },
+            {
+              text: 'Open Settings', onPress: () => {
+                Linking.openSettings();
+                cancelVoiceSearch();
+              }
+            }
+          ]
+          : [{ text: 'OK', onPress: () => cancelVoiceSearch() }]
       );
     }
   };
@@ -340,19 +368,19 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   useEffect(() => {
     if (Platform.OS === 'web' && webSpeechHook) {
       const { transcript, listening, resetTranscript } = webSpeechHook;
-      
+
       if (transcript && transcript.trim()) {
         setRecognizedText(transcript);
         setProcessingStep('Processing speech...');
-        
+
         // Process the final transcript when listening stops
         if (!listening && transcript) {
           processRecognizedText(transcript);
         }
       }
-      
+
       setIsListening(listening);
-      
+
       if (!listening && isListening) {
         // Speech recognition stopped
         stopPulseAnimation();
@@ -365,22 +393,22 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
     try {
       console.log('Processing recognized text:', text);
       setProcessingStep('Analyzing language...');
-      
+
       // Use our enhanced language detection service
       const enhancedDetection = await LanguageDetectionService.detectLanguage(text);
-      
+
       setDetectedLanguages(enhancedDetection);
-      
+
       if (enhancedDetection.length > 0) {
         const primaryLanguage = enhancedDetection[0];
         setSelectedLanguage(primaryLanguage.language);
-        
+
         setProcessingStep('Analyzing intent...');
-        
+
         // Analyze user intent
         const intent = analyzeIntent(text, primaryLanguage.language);
         console.log('Detected intent:', intent);
-        
+
         // Handle translation if needed
         if (primaryLanguage.language !== 'en-US') {
           setProcessingStep('Translating...');
@@ -393,9 +421,9 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
             setShowTranslation(false);
           }
         }
-        
+
         setProcessingStep('Complete!');
-        
+
         // Execute the appropriate callback based on intent
         if (intent.intent === 'order' && onOrderResult && intent.entities.productName) {
           onOrderResult(
@@ -411,7 +439,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
             intent.entities
           );
         }
-        
+
         // Auto-close modal after processing
         setTimeout(() => {
           setIsModalVisible(false);
@@ -448,37 +476,36 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
       } catch (error) {
         console.error('Error stopping web speech recognition:', error);
       }
-    } else if (recordingService.isCurrentlyRecording()) {
-      // Stop recording and transcribe
-      setProcessingStep('Processing audio...');
+    } else if (voiceService.isCurrentlyListening()) {
+      // Stop native speech recognition (results are handled by callback)
+      setProcessingStep('Stopping...');
       setIsListening(false);
       stopPulseAnimation();
       stopWaveAnimation();
-      
+
       try {
-        const transcribedText = await recordingService.stopRecording();
-        
-        if (transcribedText && transcribedText.trim()) {
+        const finalText = await voiceService.stopListening();
+
+        if (finalText && finalText.trim()) {
           setProcessingStep('Processing result...');
-          console.log('Transcription result:', transcribedText);
-          setRecognizedText(transcribedText);
-          
-          await handleVoiceSearchResult(transcribedText);
-        } else {
+          console.log('Final transcription:', finalText);
+          setRecognizedText(finalText);
+          await handleVoiceSearchResult(finalText);
+        } else if (!recognizedText) {
           console.warn('No speech recognized');
           setProcessingStep('No speech recognized');
         }
       } catch (error) {
-        console.error('Error processing recording:', error);
+        console.error('Error stopping speech recognition:', error);
         setProcessingStep('Processing failed');
         Alert.alert(
           'Processing Error',
-          'Failed to process the recording. Please try again.',
+          'Failed to process speech. Please try again.',
           [{ text: 'OK' }]
         );
       }
     }
-    
+
     setIsListening(false);
     stopPulseAnimation();
     stopWaveAnimation();
@@ -495,7 +522,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   const processVoiceResult = async (text: string, detectedLang: string) => {
     try {
       setProcessingStep('Processing language...');
-      
+
       // Translate to English if needed for better search results
       let translatedText = text;
       if (detectedLang !== 'en') {
@@ -505,9 +532,9 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
           console.error('Translation failed:', error);
         }
       }
-      
+
       console.log('Translation result:', { originalText: text, translatedText, language: detectedLang });
-      
+
       // Update UI with translation if needed
       if (detectedLang !== 'en' && translatedText !== text) {
         setTranslatedText(translatedText);
@@ -515,15 +542,15 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
       } else {
         setShowTranslation(false);
       }
-      
+
       // Analyze intent using both original and translated text
       const voiceIntent = analyzeIntent(text, detectedLang);
-      
+
       setProcessingStep('Understanding request...');
-      
+
       // Use translated text for search if available, otherwise use original
       const searchText = translatedText || text;
-      
+
       // Enhanced entities with translation info
       const enhancedEntities = {
         ...voiceIntent.entities,
@@ -533,15 +560,15 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
         detectedLanguage: detectedLang,
         translationConfidence: detectedLang !== 'en' ? 0.9 : 1.0
       };
-      
+
       // Handle different intents
       switch (voiceIntent.intent) {
         case 'order':
           if (onOrderResult && voiceIntent.entities.productName) {
             // Use translated product name for better matching
-            const productName = detectedLang !== 'en' ? 
+            const productName = detectedLang !== 'en' ?
               translatedText : voiceIntent.entities.productName;
-            
+
             onOrderResult(
               productName,
               voiceIntent.entities.quantity,
@@ -551,13 +578,13 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
             onSearchResult(searchText, detectedLang, 'order', enhancedEntities);
           }
           break;
-          
+
         case 'search':
         default:
           onSearchResult(searchText, detectedLang, voiceIntent.intent, enhancedEntities);
           break;
       }
-      
+
       setProcessingStep('Complete!');
     } catch (error) {
       console.error('Error processing voice result:', error);
@@ -568,17 +595,17 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
   const handleVoiceSearchResult = async (recognizedText: string) => {
     try {
       setProcessingStep('Processing voice command...');
-      
+
       // Detect language if not already detected
       if (detectedLanguages.length === 0) {
         const detected = await LanguageDetectionService.detectLanguage(recognizedText);
         setDetectedLanguages(detected);
-        
+
         if (detected.length > 0) {
           setSelectedLanguage(detected[0].language);
         }
       }
-      
+
       // Translate if needed
       let finalText = recognizedText;
       const primaryLang = detectedLanguages[0];
@@ -594,9 +621,9 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
           finalText = recognizedText; // Fallback to original text
         }
       }
-      
+
       setProcessingStep('Executing search...');
-      
+
       // Trigger the appropriate callback with correct parameters
       if (onSearchResult) {
         onSearchResult(
@@ -610,12 +637,12 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
           }
         );
       }
-      
+
       // Auto-close after successful processing
       setTimeout(() => {
         cancelVoiceSearch();
       }, 1500);
-      
+
     } catch (error) {
       console.error('Error handling voice search result:', error);
       setProcessingStep('Processing failed');
@@ -627,7 +654,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
     }
   };
 
-  const cancelVoiceSearch = () => {
+  const cancelVoiceSearch = async () => {
     if (Platform.OS === 'web' && SpeechRecognition) {
       try {
         SpeechRecognition.abortListening();
@@ -637,16 +664,16 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
       } catch (error) {
         console.error('Error canceling web speech recognition:', error);
       }
-    } else if (recordingService.isCurrentlyRecording()) {
-      // Stop any ongoing recording
+    } else if (voiceService.isCurrentlyListening()) {
+      // Cancel any ongoing speech recognition
       try {
-        recordingService.cleanup();
-        console.log('Recording stopped successfully');
+        await voiceService.cancel();
+        console.log('Speech recognition cancelled');
       } catch (error) {
-        console.log('Error stopping recording:', error);
+        console.log('Error cancelling speech recognition:', error);
       }
     }
-    
+
     setIsModalVisible(false);
     setIsListening(false);
     resetVoiceSearch();
@@ -659,15 +686,15 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
       <TouchableOpacity
         style={[compact ? styles.compactVoiceButton : styles.voiceButton, style]}
         onPress={startVoiceSearch}
-        disabled={azureServiceError !== null}
+        disabled={serviceError !== null}
       >
-        <Ionicons 
-          name="mic" 
-          size={compact ? 20 : 24} 
-          color={azureServiceError ? "#ccc" : "#666"} 
+        <Ionicons
+          name="mic"
+          size={compact ? 20 : 24}
+          color={serviceError ? "#ccc" : "#666"}
         />
         {!compact && (
-          <Text style={[styles.buttonText, azureServiceError && styles.disabledText]}>
+          <Text style={[styles.buttonText, serviceError && styles.disabledText]}>
             {placeholder}
           </Text>
         )}
@@ -699,7 +726,7 @@ const EnhancedVoiceSearch: React.FC<VoiceSearchProps> = ({
                     color={isListening ? "white" : "#666"}
                   />
                 </Animated.View>
-                
+
                 {/* Wave Animation */}
                 {isListening && (
                   <Animated.View

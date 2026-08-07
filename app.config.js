@@ -24,8 +24,16 @@ const expoConfig = {
     resizeMode: "contain",
     backgroundColor: "#ffffff"
   },
+  // Only bundle essential assets, exclude large files that can be loaded from CDN
+  // Excluded: products/*.jpg (use CDN), wholesalers/*.jpg (use CDN), large logos
   assetBundlePatterns: [
-    "**/*"
+    "assets/icon.png",
+    "assets/adaptive-icon.png",
+    "assets/splash.png",
+    "assets/images/logo.png",
+    "assets/images/categories/*.png",
+    "assets/images/placeholder.png"
+    // Note: product images and wholesaler images should be loaded from CDN, not bundled
   ],
   owner: "nithinv16",
   ios: {
@@ -33,7 +41,15 @@ const expoConfig = {
     bundleIdentifier: "com.dukaaon.app",
     infoPlist: {
       NSMicrophoneUsageDescription: "This app needs access to microphone for voice search and AI ordering functionality",
-      NSSpeechRecognitionUsageDescription: "This app needs speech recognition for AI voice ordering"
+      NSSpeechRecognitionUsageDescription: "This app needs speech recognition for AI voice ordering",
+      // Enable UPI app queries for iOS to allow direct app redirection
+      LSApplicationQueriesSchemes: [
+        "tez",        // Google Pay
+        "phonepe",    // PhonePe
+        "paytmmp",    // Paytm
+        "bhim",       // BHIM
+        "credpay",    // CRED UPI
+      ]
     }
   },
   android: {
@@ -42,22 +58,22 @@ const expoConfig = {
       backgroundColor: "#ffffff"
     },
     package: "com.sixn8.dukaaon",
-    versionCode: 40,
+    versionCode: 52,
     permissions: [
-        "CAMERA",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES",
-        "READ_MEDIA_VIDEO",
-        "INTERNET",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "RECORD_AUDIO",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_DATA_SYNC",
-        "FOREGROUND_SERVICE_LOCATION",
-        "FOREGROUND_SERVICE_MICROPHONE"
-      ],
+      "CAMERA",
+      "WRITE_EXTERNAL_STORAGE",
+      "READ_EXTERNAL_STORAGE",
+      "READ_MEDIA_IMAGES",
+      "READ_MEDIA_VIDEO",
+      "INTERNET",
+      "ACCESS_FINE_LOCATION",
+      "ACCESS_COARSE_LOCATION",
+      "RECORD_AUDIO",
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_DATA_SYNC",
+      "FOREGROUND_SERVICE_LOCATION",
+      "FOREGROUND_SERVICE_MICROPHONE"
+    ],
     googleServicesFile: "./google-services.json",
     config: {
       googleMobileAdsAppId: process.env.GOOGLE_MOBILE_ADS_APP_ID,
@@ -65,6 +81,28 @@ const expoConfig = {
         apiKey: process.env.GOOGLE_MAPS_API_KEY
       }
     },
+    // Add queries for UPI apps to enable direct app redirection
+    queries: [
+      {
+        package: ["com.google.android.apps.nbu.paisa.user"], // Google Pay
+      },
+      {
+        package: ["com.phonepe.app"], // PhonePe
+      },
+      {
+        package: ["net.one97.paytm"], // Paytm
+      },
+      {
+        package: ["in.org.npci.upiapp"], // BHIM
+      },
+      {
+        intent: [
+          {
+            action: "android.intent.action.SEND",
+          },
+        ],
+      },
+    ],
     intentFilters: [
       {
         action: "VIEW",
@@ -106,7 +144,13 @@ const expoConfig = {
       {
         "photosPermission": "The app accesses your photos to let you share them.",
         "cameraPermission": "The app accesses your camera to let you take photos.",
-        "microphonePermission": false
+        "microphonePermission": "This app needs access to your microphone for video recording."
+      }
+    ],
+    [
+      "expo-av",
+      {
+        "microphonePermission": "This app needs access to your microphone for voice search and AI ordering."
       }
     ],
     [
@@ -117,8 +161,12 @@ const expoConfig = {
           "targetSdkVersion": 35,
           "buildToolsVersion": "35.0.0",
           "kotlinVersion": "1.9.25",
+          // NDK version 26.1+ required for 16 KB page size support (Android 15+)
+          // This is critical for Google Play compatibility starting November 1, 2025
+          "ndkVersion": "26.1.10909125",
           "enableProguardInReleaseBuilds": true,
           "enableSeparateBuildPerCPUArchitecture": true,
+          "enableShrinkResourcesInReleaseBuilds": true,
           "packagingOptions": {
             "pickFirst": [
               "**/libc++_shared.so",
@@ -135,30 +183,37 @@ const expoConfig = {
             "proguard-android-optimize.txt",
             "proguard-rules.pro"
           ],
-          "applyScript": [
-            "eas-nuclear-exclusions.gradle"
-          ],
-          "gradleScriptPaths": [
-            "./android/eas-ultimate-fix.gradle"
-          ],
+          // Note: applyScript and gradleScriptPaths can cause plugin conflicts
+          // Only use if absolutely necessary and ensure scripts don't apply plugins
+          // "applyScript": [
+          //   "eas-nuclear-exclusions.gradle"
+          // ],
+          // "gradleScriptPaths": [
+          //   "./android/eas-ultimate-fix.gradle"
+          // ],
           gradleProperties: {
-              "android.useAndroidX": "true",
-              "android.enableJetifier": "false",
-              "android.suppressUnsupportedCompileSdk": "35",
-              "android.forceResolveConflicts": "true",
-              "android.excludeGroups": "com.android.support",
-              "android.dependency.excludeGroups": "com.android.support",
-              "android.dependency.forceReplace": "true",
-              "android.dependency.failOnConflict": "true",
-              "android.dependency.rejectSupportLibraries": "true",
-              "android.forceAndroidXOnly": "true",
-              "android.rejectSupportLibraries": "true",
-              "android.enableStrictDependencyChecking": "true",
-              "android.enableResourceNamespacing": "true",
-              "android.nonTransitiveRClass": "true",
-              "android.overridePathCheck": "true",
-              "android.suppressUnsupportedOptionWarnings": "true"
-            },
+            "android.useAndroidX": "true",
+            "android.enableJetifier": "false",
+            "android.suppressUnsupportedCompileSdk": "35",
+            "android.forceResolveConflicts": "true",
+            "android.excludeGroups": "com.android.support",
+            "android.dependency.excludeGroups": "com.android.support",
+            "android.dependency.forceReplace": "true",
+            "android.dependency.failOnConflict": "true",
+            "android.dependency.rejectSupportLibraries": "true",
+            "android.forceAndroidXOnly": "true",
+            "android.rejectSupportLibraries": "true",
+            "android.enableStrictDependencyChecking": "true",
+            "android.enableResourceNamespacing": "true",
+            "android.nonTransitiveRClass": "true",
+            "android.overridePathCheck": "true",
+            "android.suppressUnsupportedOptionWarnings": "true",
+            // 16 KB page size support - Required for Google Play compatibility starting November 1, 2025
+            "android.enableNativeLibraryAlignment": "true",
+            "android.bundle.nativeLibsAlignment": "16384",
+            "android.bundle.zipalign.enabled": "true",
+            "android.bundle.zipalign.alignment": "16384"
+          },
           "buildTypes": {
             "release": {
               "minifyEnabled": true,
@@ -195,6 +250,10 @@ const expoConfig = {
     // AWS Bedrock Configuration
     awsBedrockApiKey: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY,
     awsBedrockApiKeyName: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY_NAME,
+    // AWS IAM Credentials for Bedrock
+    awsAccessKeyId: process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID,
+    awsSecretAccessKey: process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY,
+    awsRegion: process.env.EXPO_PUBLIC_AWS_REGION || process.env.AWS_REGION || 'us-east-1',
     // Firebase config moved to extra
     firebaseApiKey: process.env.FIREBASE_API_KEY || "AIzaSyA",
     firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || "dukaaon.firebaseapp.com",
@@ -217,7 +276,13 @@ const expoConfig = {
         provider: 'native',
         language: 'en-IN'
       }
-    }
+    },
+    // Razorpay Configuration
+    EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_live_RxirgNtNjhxqSg",
+    EXPO_PUBLIC_RAZORPAY_KEY_SECRET: process.env.EXPO_PUBLIC_RAZORPAY_KEY_SECRET || "XNC1LWew0Fd4Ly9LoWb4Egrp",
+    // Authkey.io WhatsApp API Configuration
+    authkeyApiKey: process.env.EXPO_PUBLIC_AUTHKEY_API_KEY || "904251f34754cedc",
+    authkeyTemplateOrderReceived: "24468"
   }
 };
 

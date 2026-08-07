@@ -37,11 +37,13 @@ org.gradle.dependency.cache.cleanup=true
 org.gradle.dependency.resolution.strict=true
 
 # Android Build Settings
-android.compileSdkVersion=34
-android.targetSdkVersion=34
-android.minSdkVersion=21
-android.buildToolsVersion=34.0.0
-android.ndkVersion=25.1.8937393
+android.compileSdkVersion=35
+android.targetSdkVersion=35
+android.minSdkVersion=24
+android.buildToolsVersion=35.0.0
+# NDK version 26.1+ required for 16 KB page size support (Android 15+)
+# This is critical for Google Play compatibility starting November 1, 2025
+android.ndkVersion=26.1.10909125
 
 # Disable problematic features
 android.enableR8.fullMode=false
@@ -64,6 +66,13 @@ android.experimental.enableParallelDx=false
 android.experimental.enableIncrementalDexing=false
 android.experimental.enableBuildCache=false
 android.experimental.enableResourceOptimizations=false
+
+# 16 KB page size support - Required for Google Play compatibility starting November 1, 2025
+# See: https://developer.android.com/guide/practices/page-sizes#build
+android.enableNativeLibraryAlignment=true
+android.bundle.nativeLibsAlignment=16384
+android.bundle.zipalign.enabled=true
+android.bundle.zipalign.alignment=16384
 `;
   
   if (fs.existsSync(gradlePropsPath)) {

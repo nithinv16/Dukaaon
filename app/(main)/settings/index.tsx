@@ -15,23 +15,23 @@ export default function Settings() {
   const { insets } = useEdgeToEdge({ statusBarStyle: 'dark' });
   const { currentLanguage } = useLanguage();
   const [translations, setTranslations] = useState({});
-  const { 
-    notificationsEnabled, 
-    orderUpdatesEnabled, 
-    promotionsEnabled, 
+  const {
+    notificationsEnabled,
+    orderUpdatesEnabled,
+    promotionsEnabled,
     darkMode,
     fontFamily,
     fontSize,
-    setNotifications, 
-    setOrderUpdates, 
-    setPromotions, 
+    setNotifications,
+    setOrderUpdates,
+    setPromotions,
     setDarkMode,
     checkNotificationPermissions,
     clearCache,
     backupData,
     restoreDefaults
   } = useSettingsStore();
-  
+
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [modalTitle, setModalTitle] = useState('');
@@ -105,7 +105,7 @@ export default function Settings() {
           const translated = await translationService.translateText(value, currentLanguage);
           return [key, translated.translatedText];
         });
-        
+
         const translatedEntries = await Promise.all(translationPromises);
         const newTranslations = Object.fromEntries(translatedEntries);
         setTranslations(newTranslations);
@@ -123,7 +123,7 @@ export default function Settings() {
     const timer = setTimeout(() => {
       checkNotificationPermissions();
     }, 100); // Small delay to allow navigation to complete first
-    
+
     return () => clearTimeout(timer);
   }, [checkNotificationPermissions]);
 
@@ -180,15 +180,15 @@ export default function Settings() {
     try {
       setFetchingData(true);
       setModalTitle(translations.personalInformation || 'Personal Information');
-      
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user?.id)
         .single();
-      
+
       if (error) throw error;
-      
+
       // Display personal info in the modal
       setModalContent(
         <View>
@@ -216,7 +216,7 @@ export default function Settings() {
           </Text>
         </View>
       );
-      
+
       setModalVisible(true);
     } catch (error) {
       console.error('Error fetching personal info:', error);
@@ -230,17 +230,17 @@ export default function Settings() {
     try {
       setFetchingData(true);
       setModalTitle(translations.businessDetails || 'Business Details');
-      
+
       const { data, error } = await supabase
         .from('profiles')
         .select('business_details, shop_image')
         .eq('id', user?.id)
         .single();
-      
+
       if (error) throw error;
-      
+
       const businessDetails = data?.business_details || {};
-      
+
       // Display business details in the modal
       setModalContent(
         <View>
@@ -263,7 +263,7 @@ export default function Settings() {
           </Text>
         </View>
       );
-      
+
       setModalVisible(true);
     } catch (error) {
       console.error('Error fetching business details:', error);
@@ -297,32 +297,32 @@ export default function Settings() {
   return (
     <View style={[styles.safeArea, getSafeAreaStyles(insets)]}>
       <View style={styles.header}>
-        <IconButton 
-          icon="arrow-left" 
+        <IconButton
+          icon="arrow-left"
           size={24}
           onPress={() => router.back()}
         />
         <Text style={styles.headerTitle}>{translations.settings || 'Settings'}</Text>
-        <View style={{width: 40}} />
+        <View style={{ width: 40 }} />
       </View>
-      
+
       <ScrollView style={styles.container}>
         {/* Account Section */}
         <List.Section>
           <List.Subheader>{translations.accountSettings || 'Account Settings'}</List.Subheader>
           <List.Item
             title={translations.personalInformation || 'Personal Information'}
-            description={translations.personalInfoDescription || 'View and manage your personal details'}
+            description={translations.personalInfoDescription || 'View and edit your personal details'}
             left={props => <List.Icon {...props} icon="account" />}
             right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={fetchPersonalInfo}
+            onPress={() => router.push('/(main)/settings/edit-profile')}
           />
           <List.Item
             title={translations.businessDetails || 'Business Details'}
-            description={translations.businessDetailsDescription || 'View and manage your business information'}
+            description={translations.businessDetailsDescription || 'View and edit your business information'}
             left={props => <List.Icon {...props} icon="store" />}
             right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={fetchBusinessDetails}
+            onPress={() => router.push('/(main)/settings/edit-profile')}
           />
           <List.Item
             title={translations.changePassword || 'Change Password'}
@@ -332,9 +332,9 @@ export default function Settings() {
             onPress={showPasswordChangeInfo}
           />
         </List.Section>
-        
+
         <Divider />
-        
+
         {/* Notifications Section */}
         <List.Section>
           <List.Subheader>{translations.notifications || 'Notifications'}</List.Subheader>
@@ -392,9 +392,9 @@ export default function Settings() {
             )}
           />
         </List.Section>
-        
+
         <Divider />
-        
+
         {/* App Preferences */}
         <List.Section>
           <List.Subheader>{translations.appPreferences || 'App Preferences'}</List.Subheader>
@@ -425,9 +425,9 @@ export default function Settings() {
             onPress={() => router.push('/(main)/settings/language')}
           />
         </List.Section>
-        
+
         <Divider />
-        
+
         {/* Data & Storage */}
         <List.Section>
           <List.Subheader>{translations.dataStorage || 'Data & Storage'}</List.Subheader>
@@ -450,9 +450,9 @@ export default function Settings() {
             onPress={handleResetDefaults}
           />
         </List.Section>
-        
+
         <Divider />
-        
+
         {/* About */}
         <List.Section>
           <List.Subheader>{translations.about || 'About'}</List.Subheader>
@@ -462,7 +462,7 @@ export default function Settings() {
             left={props => <List.Icon {...props} icon="information" />}
           />
         </List.Section>
-        
+
         <Button
           mode="outlined"
           icon="logout"
@@ -493,10 +493,10 @@ export default function Settings() {
         >
           {translations.logout || 'Logout'}
         </Button>
-        
+
         <View style={styles.bottomPadding} />
       </ScrollView>
-      
+
       {/* Modal for displaying account information */}
       <Modal
         visible={modalVisible}

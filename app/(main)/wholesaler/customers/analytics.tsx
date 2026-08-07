@@ -46,7 +46,7 @@ export default function CustomerAnalytics() {
   const user = useAuthStore((state) => state.user);
   const { currentLanguage } = useLanguage();
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sectionErrors, setSectionErrors] = useState({
     purchases: false,
@@ -103,8 +103,14 @@ export default function CustomerAnalytics() {
   });
 
   useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID and customer ID
+    if (!user?.id || !id) {
+      console.log('CustomerAnalytics: Waiting for user ID or customer ID...');
+      return;
+    }
+    console.log('CustomerAnalytics: Fetching analytics for customer:', id);
     fetchAnalytics();
-  }, [timeRange]);
+  }, [timeRange, user?.id, id]);
 
   useEffect(() => {
     const loadTranslations = async () => {
@@ -158,19 +164,19 @@ export default function CustomerAnalytics() {
       lifetime: false
     });
     setError(null);
-    
+
     // Create a local copy of section errors to track failures
     const newSectionErrors = {
       purchases: false,
       preferences: false,
       lifetime: false
     };
-    
+
     try {
       if (!id) {
         throw new Error('Customer ID is required');
       }
-      
+
       // Fetch purchase history
       try {
         const { data: purchaseData, error: purchaseError } = await supabase
@@ -181,10 +187,10 @@ export default function CustomerAnalytics() {
           .order('created_at');
 
         if (purchaseError) throw purchaseError;
-          
+
         // Calculate purchase trends
         const purchaseTrends = calculatePurchaseTrends(purchaseData || []);
-        
+
         setAnalytics(prev => ({
           ...prev,
           purchases: purchaseTrends
@@ -193,7 +199,7 @@ export default function CustomerAnalytics() {
         console.error('Error fetching purchase data:', purchaseError);
         newSectionErrors.purchases = true;
       }
-      
+
       // Fetch order items with product information
       try {
         const { data: orderItemsData, error: orderItemsError } = await supabase
@@ -206,25 +212,25 @@ export default function CustomerAnalytics() {
           `)
           .eq('seller_id', user?.id)
           .eq('retailer_id', id);
-          
+
         if (orderItemsError) throw orderItemsError;
-        
+
         // Process product data in JavaScript
         const productMap = {};
         const categoryMap = {};
-        
+
         orderItemsData?.forEach(item => {
           if (item.product?.name) {
             const productName = item.product.name;
             const category = item.product.category || 'Uncategorized';
             const quantity = parseInt(item.quantity) || 0;
-            
+
             // Aggregate product quantities
             if (!productMap[productName]) {
               productMap[productName] = 0;
             }
             productMap[productName] += quantity;
-            
+
             // Aggregate category counts
             if (!categoryMap[category]) {
               categoryMap[category] = 0;
@@ -232,13 +238,13 @@ export default function CustomerAnalytics() {
             categoryMap[category]++;
           }
         });
-        
+
         // Convert maps to sorted arrays
         const topProducts = Object.entries(productMap)
           .map(([name, quantity]) => ({ name, quantity }))
           .sort((a, b) => b.quantity - a.quantity)
           .slice(0, 5);
-          
+
         const topCategories = Object.entries(categoryMap)
           .map(([name, orders]) => ({ name, orders }))
           .sort((a, b) => b.orders - a.orders)
@@ -263,9 +269,9 @@ export default function CustomerAnalytics() {
           .select('total_amount, created_at')
           .eq('retailer_id', id)
           .order('created_at');
-          
+
         if (lifetimeError) throw lifetimeError;
-        
+
         const lifetime = calculateLifetimeValue(lifetimeData || []);
 
         setAnalytics(prev => ({
@@ -276,10 +282,10 @@ export default function CustomerAnalytics() {
         console.error('Error fetching lifetime value data:', lifetimeError);
         newSectionErrors.lifetime = true;
       }
-      
+
       // Update section errors
       setSectionErrors(newSectionErrors);
-      
+
       // If all sections failed, set a general error
       if (newSectionErrors.purchases && newSectionErrors.preferences && newSectionErrors.lifetime) {
         setError('Unable to load any analytics data. Please try again later.');
@@ -313,7 +319,7 @@ export default function CustomerAnalytics() {
     const trendsMap = {};
     const labels = [];
     const data = [];
-    
+
     // No purchases
     if (!purchases || purchases.length === 0) {
       return {
@@ -323,15 +329,15 @@ export default function CustomerAnalytics() {
         labels: ['No data'],
       };
     }
-    
+
     try {
       // Group purchases by appropriate time period
       purchases.forEach(purchase => {
         if (!purchase || !purchase.created_at) return;
-        
+
         const date = new Date(purchase.created_at);
         let label;
-        
+
         // Format label based on time range
         if (timeRange === 'week') {
           label = date.toLocaleDateString('default', { weekday: 'short' });
@@ -340,26 +346,26 @@ export default function CustomerAnalytics() {
         } else { // year
           label = date.toLocaleDateString('default', { month: 'short' });
         }
-        
+
         if (!trendsMap[label]) {
           trendsMap[label] = 0;
         }
-        
+
         trendsMap[label] += parseFloat(purchase.total_amount) || 0;
       });
-      
+
       // Calculate total spent
       const total = Object.values(trendsMap).reduce((sum: any, value: any) => sum + value, 0);
-      
+
       // Convert to arrays for chart
       Object.keys(trendsMap).forEach(label => {
         labels.push(label);
         data.push(trendsMap[label]);
       });
-      
+
       // Calculate growth (mock value for now)
       const growth = 5;
-      
+
       return {
         total,
         growth,
@@ -386,23 +392,23 @@ export default function CustomerAnalytics() {
         averageOrderValue: 0,
       };
     }
-    
+
     try {
       // Calculate the total value of all orders
-      const totalValue = orders.reduce((sum, order) => 
+      const totalValue = orders.reduce((sum, order) =>
         sum + (parseFloat(order.total_amount) || 0), 0);
-      
+
       // Get the date of the first order
-      const sortedOrders = [...orders].sort((a, b) => 
+      const sortedOrders = [...orders].sort((a, b) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      
+
       const firstOrderDate = new Date(sortedOrders[0].created_at);
       const formattedSince = firstOrderDate.toLocaleDateString();
-      
+
       // Calculate the average order value
       const orderCount = orders.length;
       const averageOrderValue = orderCount > 0 ? totalValue / orderCount : 0;
-      
+
       return {
         value: totalValue,
         since: formattedSince,
@@ -424,8 +430,8 @@ export default function CustomerAnalytics() {
   const renderChart = () => {
     try {
       // Make sure there's valid data - at minimum one valid data point
-      if (sectionErrors.purchases || !analytics.purchases.data.length || 
-          (analytics.purchases.data.length === 1 && analytics.purchases.data[0] === 0 && analytics.purchases.labels[0] === translations.noData)) {
+      if (sectionErrors.purchases || !analytics.purchases.data.length ||
+        (analytics.purchases.data.length === 1 && analytics.purchases.data[0] === 0 && analytics.purchases.labels[0] === translations.noData)) {
         return (
           <View style={styles.chartErrorContainer}>
             <Text style={styles.chartErrorText}>{translations.noData}</Text>
@@ -433,7 +439,7 @@ export default function CustomerAnalytics() {
           </View>
         );
       }
-      
+
       return (
         <LineChart
           data={{
@@ -486,7 +492,7 @@ export default function CustomerAnalytics() {
         </View>
       );
     }
-    
+
     return analytics.preferences.topProducts.map((product, index) => (
       <View key={index} style={styles.productRow}>
         <Text variant="bodyMedium">{product?.name || 'Product Name'}</Text>
@@ -499,14 +505,14 @@ export default function CustomerAnalytics() {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <IconButton 
+          <IconButton
             icon="arrow-left"
             onPress={() => router.back()}
           />
           <Text variant="titleLarge">{translations.customerAnalytics}</Text>
           <View style={styles.headerRight} />
         </View>
-        
+
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2196F3" />
           <Text style={styles.loadingText}>Loading analytics data...</Text>
@@ -518,12 +524,12 @@ export default function CustomerAnalytics() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
+        <IconButton
           icon="arrow-left"
           onPress={() => router.back()}
         />
         <Text variant="titleLarge">{translations.customerAnalytics}</Text>
-        <IconButton 
+        <IconButton
           icon="refresh"
           onPress={fetchAnalytics}
         />

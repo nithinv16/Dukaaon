@@ -8,6 +8,9 @@ buildscript {
         compileSdkVersion = 35
         targetSdkVersion = 35
         kotlinVersion = "1.9.25"
+        // NDK version 26.1+ required for 16 KB page size support (Android 15+)
+        // This is critical for Google Play compatibility starting November 1, 2025
+        ndkVersion = "26.1.10909125"
         
         // AndroidX versions
         androidXCoreVersion = "1.13.1"

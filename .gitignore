@@ -17,8 +17,8 @@ web-build/
 *.mobileprovision
 
 # Native build folders (for CNG/Prebuild)
-/android/
-/ios/
+# /android/  # Commented out to allow manual android folder management
+# /ios/
 
 # Metro
 .metro-health-check*
@@ -111,7 +111,7 @@ build/
 
 # Gradle
 .gradle/
-gradle.properties
+# gradle.properties  # Commented out to allow manual configuration
 
 # Azure and AWS credentials
 azure/

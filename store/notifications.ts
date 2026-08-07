@@ -6,6 +6,7 @@ interface NotificationsState {
   notifications: Notification[];
   unreadCount: number;
   loading: boolean;
+  error: string | null;
   fetchNotifications: () => Promise<void>;
   markAsRead: (id: string) => Promise<void>;
   markAllAsRead: () => Promise<void>;
@@ -16,6 +17,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
   notifications: [],
   unreadCount: 0,
   loading: false,
+  error: null,
 
   fetchNotifications: async () => {
     set({ loading: true });
@@ -27,12 +29,14 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
       if (error) throw error;
 
-      set({ 
+      set({
         notifications: data as Notification[],
-        unreadCount: data.filter(n => !n.read).length
+        unreadCount: data.filter(n => !n.read).length,
+        error: null
       });
     } catch (error) {
       console.error('Error fetching notifications:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to fetch notifications' });
     } finally {
       set({ loading: false });
     }
@@ -40,6 +44,9 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   markAsRead: async (id: string) => {
     try {
+      const notification = get().notifications.find(n => n.id === id);
+      if (!notification || notification.read) return;
+
       const { error } = await supabase
         .from('notifications')
         .update({ read: true })
@@ -48,13 +55,14 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       if (error) throw error;
 
       set(state => ({
-        notifications: state.notifications.map(n => 
+        notifications: state.notifications.map(n =>
           n.id === id ? { ...n, read: true } : n
         ),
-        unreadCount: state.unreadCount - 1
+        unreadCount: Math.max(0, state.unreadCount - 1)
       }));
     } catch (error) {
       console.error('Error marking notification as read:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to mark notification as read' });
     }
   },
 
@@ -73,13 +81,14 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       }));
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to mark all as read' });
     }
   },
 
   addNotification: (notification: Notification) => {
     set(state => ({
       notifications: [notification, ...state.notifications],
-      unreadCount: state.unreadCount + 1
+      unreadCount: notification.read ? state.unreadCount : state.unreadCount + 1
     }));
   },
 })); 

@@ -28,7 +28,7 @@ export const useLocationStore = create<LocationState>()(
     (set, get) => ({
       userLocation: null,
       locationAddress: null,
-      distanceFilter: 20, // Default 20km
+      distanceFilter: 50, // Default 50km
       locationPermissionGranted: false,
       isLocationLoading: false,
       
@@ -45,7 +45,7 @@ export const useLocationStore = create<LocationState>()(
       setDistanceFilter: (distance) => {
         // Ensure distance is always a number
         const numericDistance = Array.isArray(distance) ? distance[0] : distance;
-        const safeDistance = typeof numericDistance === 'number' ? numericDistance : parseFloat(numericDistance) || 20;
+        const safeDistance = typeof numericDistance === 'number' ? numericDistance : parseFloat(numericDistance) || 50;
         set({ distanceFilter: safeDistance });
       },
       
@@ -174,11 +174,11 @@ export const useLocationStore = create<LocationState>()(
         if (state && state.distanceFilter) {
           // Fix corrupted distanceFilter if it's an array
           if (Array.isArray(state.distanceFilter)) {
-            state.distanceFilter = state.distanceFilter[0] || 20;
+            state.distanceFilter = state.distanceFilter[0] || 50;
           }
           // Ensure it's a valid number
           if (typeof state.distanceFilter !== 'number' || isNaN(state.distanceFilter)) {
-            state.distanceFilter = 20;
+            state.distanceFilter = 50;
           }
         }
       }

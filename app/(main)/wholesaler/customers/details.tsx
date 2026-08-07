@@ -30,7 +30,7 @@ export default function CustomerDetails() {
   const user = useAuthStore((state) => state.user);
   const { currentLanguage } = useLanguage();
   const [customer, setCustomer] = useState<CustomerDetails | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [translations, setTranslations] = useState({
     customerDetails: 'Customer Details',
     businessInformation: 'Business Information',
@@ -52,8 +52,14 @@ export default function CustomerDetails() {
   });
 
   useEffect(() => {
+    // CRITICAL: Don't fetch until we have a valid user ID and customer ID
+    if (!user?.id || !id) {
+      console.log('CustomerDetails: Waiting for user ID or customer ID...');
+      return;
+    }
+    console.log('CustomerDetails: Fetching details for customer:', id);
     fetchCustomerDetails();
-  }, [id]);
+  }, [id, user?.id]);
 
   useEffect(() => {
     const loadTranslations = async () => {
@@ -155,7 +161,7 @@ export default function CustomerDetails() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <IconButton 
+        <IconButton
           icon="arrow-left"
           onPress={() => router.back()}
         />
@@ -211,10 +217,10 @@ export default function CustomerDetails() {
               description={customer.phone_number}
               left={props => <List.Icon {...props} icon="phone" />}
               right={props => (
-                <IconButton 
-                  {...props} 
-                  icon="phone" 
-                  onPress={() => {/* Handle call */}}
+                <IconButton
+                  {...props}
+                  icon="phone"
+                  onPress={() => {/* Handle call */ }}
                 />
               )}
             />
@@ -226,10 +232,10 @@ export default function CustomerDetails() {
                   description={customer.email}
                   left={props => <List.Icon {...props} icon="email" />}
                   right={props => (
-                    <IconButton 
-                      {...props} 
-                      icon="email" 
-                      onPress={() => {/* Handle email */}}
+                    <IconButton
+                      {...props}
+                      icon="email"
+                      onPress={() => {/* Handle email */ }}
                     />
                   )}
                 />

@@ -11,10 +11,19 @@ interface PermissionStatus {
   error?: string;
 }
 
+/**
+ * Development-only debug component for notification permission diagnostics
+ * Only renders in development mode (__DEV__ === true)
+ */
 export function NotificationPermissionDebug() {
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const { notificationsEnabled, checkNotificationPermissions } = useSettingsStore();
+
+  // Only render in development
+  if (!__DEV__) {
+    return null;
+  }
 
   const checkPermissions = async () => {
     setLoading(true);
