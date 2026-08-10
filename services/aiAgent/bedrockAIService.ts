@@ -1,11 +1,32 @@
-// Bedrock AI Service with Claude 3.5 Sonnet - React Native Compatible
+// Bedrock AI Service with Claude Sonnet 4.5 - React Native Compatible with Vision Support
 import { BEDROCK_CONFIG, AI_AGENT_CONFIG } from '../../config/awsBedrock';
 import { supabase } from '../supabase/supabase';
 import { useCartStore } from '../../store/cart';
+import { enhancedContextService, EnhancedUserContext } from './enhancedContextService';
+import { conversationContextManager } from './conversationContextManager';
+
+// Image content for vision-enabled messages
+export interface ImageContent {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    data: string; // base64 encoded image
+  };
+}
+
+// Text content
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+// Combined content type for multimodal messages
+export type MessageContent = string | (TextContent | ImageContent)[];
 
 export interface AIMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: MessageContent;
   timestamp?: Date;
   function_calls?: any[];
 }
@@ -37,6 +58,10 @@ export interface AIResponse {
   conversationId?: string;
   suggestions?: string[];
   timestamp?: string;
+  order_items?: any[];
+  unavailable_items?: string[];
+  search_results?: any[];
+  search_query?: string;
 }
 
 class BedrockAIService {
@@ -47,43 +72,285 @@ class BedrockAIService {
     this.modelId = BEDROCK_CONFIG.modelId;
   }
 
-  // Main chat completion method
+  // Main chat completion method - supports text and images
   async chat(
     messages: AIMessage[],
     userId: string,
     conversationId?: string,
-    useStreaming: boolean = false
+    useStreaming: boolean = false,
+    appLanguage?: string  // Optional: override profile language with current app language
   ): Promise<AIResponse> {
     try {
       // Get user context
       const context = await this.getUserContext(userId);
-      
+
+      // Override profile language with app language if provided
+      // This ensures AI responds in the user's current app language
+      if (appLanguage && context.user_profile) {
+        context.user_profile.language = appLanguage;
+      }
+
+      // Build conversation context with smart summarization for long conversations
+      const contextualizedMessages = await conversationContextManager.buildConversationContext(
+        conversationId,
+        userId,
+        messages
+      );
+
       // Prepare messages with system prompt and context
       const systemMessage = this.buildSystemMessage(context);
-      const formattedMessages = [systemMessage, ...messages];
 
-      // Prepare the request payload for OpenAI model
+      // Update conversation context in enhanced context
+      if (conversationId && contextualizedMessages.messages.length > 0) {
+        const lastUserMessage = contextualizedMessages.messages
+          .filter(m => m.role === 'user')
+          .slice(-1)[0];
+
+        if (lastUserMessage) {
+          // Will update after getting AI response
+          context.conversation_context.current_conversation_id = conversationId;
+        }
+      }
+
+      // Add summary info to system message if summary exists
+      let finalSystemContent = typeof systemMessage.content === 'string'
+        ? systemMessage.content
+        : '';
+
+      if (contextualizedMessages.has_summary && contextualizedMessages.summary_text) {
+        finalSystemContent += `\n\n=== CONVERSATION SUMMARY ===
+Previous conversation has been summarized. Key points: ${contextualizedMessages.summary_text.substring(0, 200)}...`;
+      }
+
+      // Claude format: system is separate, messages don't include system role
+      // Format content for multimodal support (text + images)
+      const claudeMessages = contextualizedMessages.messages.map(msg => ({
+        role: msg.role === 'system' ? 'user' : msg.role,
+        content: this.formatMessageContent(msg.content)
+      }));
+
+      // Prepare the request payload for Claude model (Anthropic format)
       const payload = {
-        model: BEDROCK_CONFIG.modelId,
+        anthropic_version: BEDROCK_CONFIG.anthropicVersion || 'bedrock-2023-05-31',
         max_tokens: BEDROCK_CONFIG.maxTokens,
         temperature: BEDROCK_CONFIG.temperature,
-        top_p: BEDROCK_CONFIG.topP,
-        messages: formattedMessages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        })),
-        tools: this.getAvailableTools(),
-        tool_choice: "auto"
+        // Note: top_p removed - Claude Sonnet 4.5 doesn't allow both temperature and top_p
+        system: finalSystemContent,
+        messages: claudeMessages,
+        tools: this.getClaudeTools(),
       };
 
       if (useStreaming) {
         return await this.streamResponse(payload, conversationId);
       } else {
-        return await this.getSingleResponse(payload, conversationId);
+        const response = await this.getSingleResponse(payload, conversationId);
+
+        // Update conversation context after getting response
+        if (conversationId && contextualizedMessages.messages.length > 0) {
+          const lastUserMessage = contextualizedMessages.messages
+            .filter(m => m.role === 'user')
+            .slice(-1)[0];
+
+          if (lastUserMessage) {
+            const aiResponseMessage: AIMessage = {
+              role: 'assistant',
+              content: response.content,
+              timestamp: new Date(),
+              function_calls: response.function_calls
+            };
+
+            // Update conversation context asynchronously (don't wait)
+            conversationContextManager.updateConversationContext(
+              conversationId,
+              userId,
+              lastUserMessage,
+              aiResponseMessage
+            ).catch(err => {
+              console.error('[BedrockAIService] Error updating conversation context:', err);
+            });
+          }
+        }
+
+        return response;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Bedrock AI Service Error:', error);
       throw new Error(`AI Service Error: ${error.message}`);
+    }
+  }
+
+  // Format message content for Claude's multimodal API
+  private formatMessageContent(content: MessageContent): any {
+    // If content is already an array (multimodal), return as is
+    if (Array.isArray(content)) {
+      return content;
+    }
+    // If content is a string, wrap it in text format for Claude
+    return content;
+  }
+
+  // Process image with product list extraction
+  async processProductListImage(
+    imageBase64: string,
+    mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+    userId: string
+  ): Promise<AIResponse> {
+    // Create a message with the image and instructions
+    const imageMessage: AIMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mediaType,
+            data: imageBase64
+          }
+        },
+        {
+          type: 'text',
+          text: `Please analyze this product list image and extract all products with their quantities.
+
+For each product found:
+1. Extract the product name
+2. Extract the quantity if mentioned
+3. Note the unit (kg, pieces, packets, etc.) if specified
+
+After extracting the products, I will search for them in nearby seller inventories (within 50km) and provide you with:
+- Products found with seller details and prices
+- Products not available in any nearby seller's inventory
+
+Please list all products you can see in the image in this format:
+- Product Name | Quantity | Unit
+
+If you're unsure about any product or quantity, please indicate that so we can confirm with the user.`
+        }
+      ],
+      timestamp: new Date()
+    };
+
+    // Process with the AI
+    return await this.chat([imageMessage], userId);
+  }
+
+  // Match extracted products to seller inventory within radius
+  async matchProductsToInventory(
+    extractedProducts: Array<{ name: string; quantity: number; unit?: string }>,
+    userId: string,
+    radiusKm: number = 50
+  ): Promise<{
+    found: Array<{
+      product: any;
+      seller: any;
+      distance_km: number;
+      extracted_qty: number;
+      extracted_unit?: string;
+    }>;
+    notFound: Array<{ name: string; quantity: number; unit?: string }>;
+  }> {
+    try {
+      // Get user's location
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('latitude, longitude, business_details')
+        .eq('id', userId)
+        .single();
+
+      const userLat = userProfile?.business_details?.latitude || userProfile?.latitude;
+      const userLon = userProfile?.business_details?.longitude || userProfile?.longitude;
+
+      if (!userLat || !userLon) {
+        throw new Error('User location not available. Please update your business address.');
+      }
+
+      const found: Array<{
+        product: any;
+        seller: any;
+        distance_km: number;
+        extracted_qty: number;
+        extracted_unit?: string;
+      }> = [];
+      const notFound: Array<{ name: string; quantity: number; unit?: string }> = [];
+
+      // Search for each product
+      for (const extracted of extractedProducts) {
+        // Search products with seller info
+        const { data: products, error } = await supabase
+          .from('products')
+          .select(`
+            id, name, price, image_url, category, subcategory, brand,
+            description, stock_available, unit, min_quantity, seller_id,
+            profiles!products_seller_id_fkey (
+              id, business_details, latitude, longitude,
+              seller_details (
+                business_name, seller_type, latitude, longitude
+              )
+            )
+          `)
+          .or(`name.ilike.%${extracted.name}%,brand.ilike.%${extracted.name}%`)
+          .eq('status', 'active')
+          .limit(20);
+
+        if (error || !products || products.length === 0) {
+          notFound.push(extracted);
+          continue;
+        }
+
+        // Find best matching product from nearby sellers
+        let bestMatch: any = null;
+        let bestDistance = Infinity;
+
+        for (const product of products) {
+          const profile = product.profiles;
+          if (!profile) continue;
+
+          // Get seller coordinates
+          const sellerLat = profile.seller_details?.[0]?.latitude || profile.latitude || profile.business_details?.latitude;
+          const sellerLon = profile.seller_details?.[0]?.longitude || profile.longitude || profile.business_details?.longitude;
+
+          if (!sellerLat || !sellerLon) continue;
+
+          // Calculate distance
+          const distance = this.calculateDistance(userLat, userLon, sellerLat, sellerLon);
+
+          if (distance <= radiusKm && distance < bestDistance) {
+            bestDistance = distance;
+            bestMatch = {
+              product: {
+                id: product.id,
+                name: product.name,
+                price: product.price,
+                image_url: product.image_url,
+                category: product.category,
+                subcategory: product.subcategory,
+                brand: product.brand,
+                stock_available: product.stock_available,
+                unit: product.unit,
+                min_quantity: product.min_quantity
+              },
+              seller: {
+                id: product.seller_id,
+                name: profile.seller_details?.[0]?.business_name || profile.business_details?.shopName || 'Unknown Seller',
+                type: profile.seller_details?.[0]?.seller_type || 'wholesaler'
+              },
+              distance_km: Math.round(distance * 10) / 10,
+              extracted_qty: extracted.quantity,
+              extracted_unit: extracted.unit
+            };
+          }
+        }
+
+        if (bestMatch) {
+          found.push(bestMatch);
+        } else {
+          notFound.push(extracted);
+        }
+      }
+
+      return { found, notFound };
+    } catch (error: any) {
+      console.error('Error matching products to inventory:', error);
+      throw error;
     }
   }
 
@@ -110,77 +377,102 @@ class BedrockAIService {
     }
   }
 
-  // Invoke AWS Bedrock model using direct HTTP API calls (React Native compatible)
+  // Invoke AWS Bedrock model using AWS SDK (@aws-sdk/client-bedrock-runtime)
   private async invokeBedrockModel(payload: any): Promise<any> {
-    const { BEDROCK_CONFIG } = await import('../../config/awsBedrock');
-    
+    const { BEDROCK_CONFIG, AWS_CONFIG } = await import('../../config/awsBedrock');
+    const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+
     try {
-      // Get AWS Bedrock API key from environment variables (React Native compatible)
-      // Try multiple methods to access the API key
-      let apiKey = process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY;
-      
-      // Fallback to Expo Constants for environment variables
-      if (!apiKey) {
-        try {
-          const Constants = require('expo-constants').default;
-          apiKey = Constants.expoConfig?.extra?.awsBedrockApiKey || Constants.manifest?.extra?.awsBedrockApiKey;
-        } catch (error) {
-          console.log('Constants not available, using process.env only');
-        }
-      }
-      
-      if (!apiKey) {
-        throw new Error('AWS Bedrock API key not found. Please check EXPO_PUBLIC_AWS_BEDROCK_API_KEY in .env file');
+      const accessKeyId = AWS_CONFIG.credentials.accessKeyId || process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || '';
+      const secretAccessKey = AWS_CONFIG.credentials.secretAccessKey || process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || '';
+      const region = AWS_CONFIG.region || process.env.EXPO_PUBLIC_AWS_REGION || 'us-east-1';
+
+      console.log('[Bedrock] Access Key ID:', accessKeyId ? accessKeyId.substring(0, 8) + '...' : 'NOT SET');
+      console.log('[Bedrock] Secret Key:', secretAccessKey ? 'SET (hidden)' : 'NOT FOUND');
+
+      if (!accessKeyId || !secretAccessKey) {
+        throw new Error('AWS credentials not found');
       }
 
-      // AWS Bedrock Runtime endpoint for us-east-1 region
-      const bedrockEndpoint = 'https://bedrock-runtime.us-east-1.amazonaws.com';
-      const modelId = BEDROCK_CONFIG.modelId;
-      
-      // Direct AWS Bedrock API call using API key authentication
-      const response = await fetch(`${bedrockEndpoint}/model/${modelId}/invoke`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'X-Amzn-Bedrock-Accept': '*/*',
-          'X-Amzn-Bedrock-Content-Type': 'application/json'
+      console.log('[Bedrock] Initializing client with region:', region);
+      console.log('[Bedrock] Using model:', BEDROCK_CONFIG.modelId);
+
+      // Initialize the Bedrock client with IAM credentials
+      const bedrockClient = new BedrockRuntimeClient({
+        region: region,
+        credentials: {
+          accessKeyId: accessKeyId,
+          secretAccessKey: secretAccessKey,
         },
-        body: JSON.stringify(payload)
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Bedrock API Error:', response.status, errorText);
-        throw new Error(`Bedrock API request failed: ${response.status} ${errorText}`);
-      }
+      // Invoke the model using InvokeModelCommand
+      const command = new InvokeModelCommand({
+        modelId: BEDROCK_CONFIG.modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify(payload),
+      });
 
-      const result = await response.json();
+      console.log('[Bedrock] Sending request...');
+      const response = await bedrockClient.send(command);
+
+      // Parse the response body
+      const responseBody = new TextDecoder().decode(response.body);
+      const result = JSON.parse(responseBody);
+
+      console.log('[Bedrock] Response received successfully');
       return result;
-    } catch (error) {
-      console.error('AWS Bedrock invocation failed:', error);
+    } catch (error: any) {
+      console.error('[Bedrock] AWS Bedrock invocation failed:', error);
+      // No fallback - throw the error directly
       throw new Error(`AI Service Error: ${error.message}`);
     }
   }
 
-  // Parse Bedrock response for OpenAI model
+  // Parse Bedrock response - supports Claude (primary) and OpenAI formats
   private parseBedrockResponse(response: any): AIResponse {
     try {
       // Enhanced logging for debugging
       console.log('Bedrock response structure:', JSON.stringify(response, null, 2));
-      
-      // Handle OpenAI response format from AWS Bedrock
+
+      // PRIMARY: Handle Claude 3.5 Sonnet response format with content array
+      if (response.content && Array.isArray(response.content)) {
+        let content = '';
+        let functionCalls: AIFunctionCall[] = [];
+
+        for (const item of response.content) {
+          if (item.type === 'text') {
+            content += item.text;
+          } else if (item.type === 'tool_use') {
+            console.log('Claude tool call detected:', item.name, item.input);
+            functionCalls.push({
+              name: item.name,
+              parameters: item.input
+            });
+          }
+        }
+
+        content = this.removeReasoningSection(content);
+
+        return {
+          content: content.trim(),
+          function_calls: functionCalls.length > 0 ? functionCalls : [],
+          confidence: 0.95 // Claude tends to have high quality responses
+        };
+      }
+
+      // FALLBACK: Handle OpenAI response format from AWS Bedrock
       if (response.choices && Array.isArray(response.choices) && response.choices.length > 0) {
         const choice = response.choices[0];
         const message = choice.message;
-        
+
         let content = message.content || '';
         let functionCalls: AIFunctionCall[] = [];
-        
+
         // Remove reasoning section from content if present
         content = this.removeReasoningSection(content);
-        
+
         // Handle tool calls in OpenAI format
         if (message.tool_calls && Array.isArray(message.tool_calls)) {
           console.log('Function calls detected:', message.tool_calls.length);
@@ -197,11 +489,11 @@ class BedrockAIService {
         };
       }
 
-      // Handle direct response format from Bedrock API
+      // Handle direct response format from Bedrock API (legacy)
       if (response.completion) {
         let content = response.completion;
         content = this.removeReasoningSection(content);
-        
+
         return {
           content: content,
           function_calls: [],
@@ -209,41 +501,15 @@ class BedrockAIService {
         };
       }
 
-      // Handle Claude 3.5 Sonnet response format with content array
-      if (response.content && Array.isArray(response.content)) {
-        let content = '';
-        let functionCalls: AIFunctionCall[] = [];
-        
-        for (const item of response.content) {
-          if (item.type === 'text') {
-            content += item.text;
-          } else if (item.type === 'tool_use') {
-            console.log('Function call detected:', item.name, item.input);
-            functionCalls.push({
-              name: item.name,
-              parameters: item.input
-            });
-          }
-        }
-        
-        content = this.removeReasoningSection(content);
-        
-        return {
-          content: content.trim(),
-          function_calls: functionCalls.length > 0 ? functionCalls : [],
-          confidence: 0.9
-        };
-      }
-
       // Fallback for different response formats
       let content = response.content || response.text || response.completion || 'I apologize, but I encountered an issue processing your request.';
       content = this.removeReasoningSection(content);
-      
+
       // Log if no content was found
       if (!content || content.trim() === '') {
         console.warn('No content found in response:', response);
       }
-      
+
       return {
         content: content,
         function_calls: response.function_calls || [],
@@ -263,35 +529,191 @@ class BedrockAIService {
   // Remove reasoning section from AI response content
   private removeReasoningSection(content: string): string {
     if (!content) return content;
-    
+
     // Remove <reasoning>...</reasoning> tags and their content
     const reasoningRegex = /<reasoning>[\s\S]*?<\/reasoning>/gi;
     content = content.replace(reasoningRegex, '');
-    
+
     // Clean up any extra whitespace or newlines left behind
     content = content.trim();
-    
+
     return content;
   }
 
-  // Build system message with context
-  private buildSystemMessage(context: any): AIMessage {
+  // Build system message with enhanced context
+  private buildSystemMessage(context: EnhancedUserContext): AIMessage {
     let systemContent = AI_AGENT_CONFIG.systemPrompt;
-    
+
+    // Add user profile context
     if (context.user_profile) {
-      systemContent += `\n\nUser Profile:
-- Role: ${context.user_profile.role}
-- Business: ${context.user_profile.business_details?.shopName || 'Not specified'}
-- Language: ${context.user_profile.language || 'en'}
-- Location: ${context.user_profile.business_details?.address || 'Not specified'}`;
+      systemContent += `\n\n=== USER PROFILE ===
+- Business: ${context.user_profile.business_name}
+- Location: ${context.user_profile.location.city}, ${context.user_profile.location.state}
+- Address: ${context.user_profile.location.address}
+- Language: ${context.user_profile.language}
+- Coordinates: ${context.user_profile.location.latitude}, ${context.user_profile.location.longitude}`;
+
+      // Add language response instruction
+      const userLanguage = context.user_profile.language || 'en';
+      if (userLanguage !== 'en') {
+        const languageNames: Record<string, string> = {
+          'hi': 'Hindi (हिंदी)',
+          'ml': 'Malayalam (മലയാളം)',
+          'ta': 'Tamil (தமிழ்)',
+          'te': 'Telugu (తెలుగు)',
+          'kn': 'Kannada (ಕన ್ನಡ)',
+          'mr': 'Marathi (मराठी)',
+          'bn': 'Bengali (বাংলা)'
+        };
+        const langName = languageNames[userLanguage] || userLanguage;
+        systemContent += `\n\n=== IMPORTANT: LANGUAGE INSTRUCTION ===
+The user's preferred language is ${langName}. Respond ENTIRELY in ${langName}.
+
+TRANSLATE EVERYTHING including:
+- All conversational messages and greetings
+- Product names and descriptions
+- Category and subcategory names  
+- Status updates and confirmations
+- Seller/wholesaler names (if translatable)
+- All text shown to the user
+
+KEEP THESE IN ORIGINAL FORMAT (do not translate):
+- JSON structure keys (type, name, price, quantity, available_items, etc.)
+- Numbers and currency symbols (₹)
+- Unit abbreviations (kg, L, pcs, g, ml)
+- Brand names that are proper nouns (Amul, Britannia, Parle, Tata, etc.)
+
+EXAMPLE CORRECT RESPONSE in ${langName}:
+{
+  "type": "order_review",
+  "message": "[translated message in ${langName}]",
+  "available_items": [
+    {"name": "[product name in ${langName}]", "unit_price": 250, "quantity": 2, "unit": "kg"}
+  ],
+  "unavailable_items": ["[item name in ${langName}]"]
+}
+
+Write naturally in ${langName} script. Use emojis for visual emphasis: ✅ ❌ 📦 💰 🛒 ⚠️ 📍`;
+      }
     }
 
-    if (context.current_cart && context.current_cart.length > 0) {
-      systemContent += `\n\nCurrent Cart: ${context.current_cart.length} items`;
+    // Add current cart context
+    if (context.current_cart && context.current_cart.item_count > 0) {
+      systemContent += `\n\n=== CURRENT CART ===
+- Items: ${context.current_cart.item_count}
+- Total: ₹${context.current_cart.total.toFixed(2)}`;
+
+      // Add cart item details (first 3 items)
+      const topItems = context.current_cart.items.slice(0, 3);
+      if (topItems.length > 0) {
+        systemContent += `\n- Top items: ${topItems.map(item =>
+          `${item.product?.name || 'Item'} (${item.quantity}x)`
+        ).join(', ')}`;
+      }
     }
 
-    if (context.recent_orders && context.recent_orders.length > 0) {
-      systemContent += `\n\nRecent Orders: User has ${context.recent_orders.length} recent orders`;
+    // Add order history insights
+    if (context.order_history && context.order_history.total_orders > 0) {
+      systemContent += `\n\n=== ORDER HISTORY INSIGHTS ===
+- Total orders: ${context.order_history.total_orders}
+- Average order value: ₹${context.order_history.average_order_value.toFixed(2)}
+- Ordering frequency: ${context.order_history.ordering_frequency}
+- Typical order size: ${context.order_history.typical_order_size.toFixed(1)} items`;
+
+      if (context.order_history.favorite_categories.length > 0) {
+        systemContent += `\n- Favorite categories: ${context.order_history.favorite_categories.join(', ')}`;
+      }
+
+      if (context.order_history.favorite_brands.length > 0) {
+        systemContent += `\n- Favorite brands: ${context.order_history.favorite_brands.join(', ')}`;
+      }
+
+      if (context.order_history.preferred_sellers.length > 0) {
+        systemContent += `\n- Preferred sellers: ${context.order_history.preferred_sellers.length} sellers`;
+      }
+    }
+
+    // Add behavioral patterns
+    if (context.behavior_patterns) {
+      if (context.behavior_patterns.preferred_order_time.length > 0) {
+        systemContent += `\n\n=== BEHAVIOR PATTERNS ===
+- Preferred order time: ${context.behavior_patterns.preferred_order_time.join(', ')}`;
+      }
+
+      if (context.behavior_patterns.preferred_payment_method) {
+        systemContent += `\n- Preferred payment method: ${context.behavior_patterns.preferred_payment_method}`;
+      }
+
+      if (context.behavior_patterns.repeat_purchase_rate > 0) {
+        systemContent += `\n- Repeat purchase rate: ${(context.behavior_patterns.repeat_purchase_rate * 100).toFixed(0)}%`;
+      }
+
+      if (context.behavior_patterns.search_patterns.length > 0) {
+        systemContent += `\n- Recent search patterns: ${context.behavior_patterns.search_patterns.slice(0, 3).join(', ')}`;
+      }
+    }
+
+    // Add learned preferences
+    if (context.learned_preferences) {
+      systemContent += `\n\n=== LEARNED PREFERENCES ===
+- Price sensitivity: ${context.learned_preferences.price_sensitivity}
+- Quality preference: ${context.learned_preferences.quality_preference}
+- Delivery speed preference: ${context.learned_preferences.delivery_speed_preference}
+- Bulk buying tendency: ${context.learned_preferences.bulk_buying_tendency ? 'Yes' : 'No'}`;
+
+      // Add top brands if available
+      const topBrands = Object.entries(context.learned_preferences.brand_loyalty)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([brand]) => brand);
+
+      if (topBrands.length > 0) {
+        systemContent += `\n- Top preferred brands: ${topBrands.join(', ')}`;
+      }
+
+      // Add top categories if available
+      const topCategories = Object.entries(context.learned_preferences.category_preferences)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([category]) => category);
+
+      if (topCategories.length > 0) {
+        systemContent += `\n- Top preferred categories: ${topCategories.join(', ')}`;
+      }
+    }
+
+    // Add contextual information
+    if (context.contextual_info) {
+      systemContent += `\n\n=== CURRENT CONTEXT ===
+- Time: ${context.contextual_info.current_time} on ${context.contextual_info.day_of_week}
+- Season: ${context.contextual_info.season}`;
+
+      if (context.contextual_info.price_drops && context.contextual_info.price_drops.length > 0) {
+        systemContent += `\n- Price drops available: ${context.contextual_info.price_drops.length} products`;
+      }
+
+      if (context.contextual_info.stockout_alerts && context.contextual_info.stockout_alerts.length > 0) {
+        systemContent += `\n- Stock alerts: ${context.contextual_info.stockout_alerts.length} products running low`;
+      }
+
+      if (context.contextual_info.new_products_available && context.contextual_info.new_products_available.length > 0) {
+        systemContent += `\n- New products available: ${context.contextual_info.new_products_available.length} items`;
+      }
+    }
+
+    // Add conversation context if available
+    if (context.conversation_context && context.conversation_context.conversation_topic) {
+      systemContent += `\n\n=== CURRENT CONVERSATION ===
+- Topic: ${context.conversation_context.conversation_topic}
+- Intent: ${context.conversation_context.user_intent}`;
+
+      if (context.conversation_context.mentioned_products.length > 0) {
+        systemContent += `\n- Products mentioned: ${context.conversation_context.mentioned_products.join(', ')}`;
+      }
+
+      if (context.conversation_context.mentioned_categories.length > 0) {
+        systemContent += `\n- Categories mentioned: ${context.conversation_context.mentioned_categories.join(', ')}`;
+      }
     }
 
     return {
@@ -301,39 +723,93 @@ class BedrockAIService {
     };
   }
 
-  // Get user context from database
-  private async getUserContext(userId: string): Promise<any> {
+  // Get enhanced user context using the enhanced context service
+  private async getUserContext(userId: string): Promise<EnhancedUserContext> {
     try {
-      // Get user profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      // Use the enhanced context service for comprehensive context
+      const enhancedContext = await enhancedContextService.getUserContext(userId);
 
-      // Get current cart (if exists)
-      const { data: cart } = await supabase
-        .from('cart_items')
-        .select('*, products(*)')
-        .eq('user_id', userId);
+      // Log context loading for debugging (optional)
+      if (__DEV__) {
+        console.log('[BedrockAIService] Enhanced context loaded:', {
+          orders: enhancedContext.order_history.total_orders,
+          cartItems: enhancedContext.current_cart.item_count,
+          preferences: Object.keys(enhancedContext.learned_preferences.brand_loyalty).length
+        });
+      }
 
-      // Get recent orders
-      const { data: orders } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      return {
-        user_profile: profile,
-        current_cart: cart || [],
-        recent_orders: orders || [],
-        preferences: profile?.preferences || {}
-      };
+      return enhancedContext;
     } catch (error) {
-      console.error('Error getting user context:', error);
-      return {};
+      console.error('[BedrockAIService] Error getting enhanced user context:', error);
+
+      // Fallback to minimal context if enhanced service fails
+      // The enhanced service already handles errors internally, but we add extra safety
+      try {
+        return await enhancedContextService.getUserContext(userId);
+      } catch (fallbackError) {
+        console.error('[BedrockAIService] Fallback context also failed:', fallbackError);
+        // Return minimal context structure
+        return {
+          user_profile: {
+            id: userId,
+            role: 'retailer',
+            business_name: 'Unknown',
+            location: {
+              latitude: 0,
+              longitude: 0,
+              address: '',
+              city: '',
+              state: ''
+            },
+            language: 'en',
+            preferences: {}
+          },
+          current_cart: {
+            items: [],
+            total: 0,
+            item_count: 0
+          },
+          order_history: {
+            recent_orders: [],
+            total_orders: 0,
+            average_order_value: 0,
+            favorite_categories: [],
+            favorite_brands: [],
+            preferred_sellers: [],
+            ordering_frequency: 'occasional',
+            typical_order_size: 0,
+            seasonal_patterns: {}
+          },
+          behavior_patterns: {
+            preferred_order_time: [],
+            preferred_payment_method: 'cod',
+            browsing_history: [],
+            search_patterns: [],
+            abandoned_carts: 0,
+            repeat_purchase_rate: 0
+          },
+          learned_preferences: {
+            price_sensitivity: 'medium',
+            quality_preference: 'standard',
+            brand_loyalty: {},
+            category_preferences: {},
+            delivery_speed_preference: 'standard',
+            bulk_buying_tendency: false
+          },
+          contextual_info: {
+            current_time: new Date().toLocaleTimeString(),
+            day_of_week: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+            season: 'Unknown'
+          },
+          conversation_context: {
+            current_conversation_id: '',
+            conversation_topic: '',
+            mentioned_products: [],
+            mentioned_categories: [],
+            user_intent: ''
+          }
+        };
+      }
     }
   }
 
@@ -347,60 +823,65 @@ class BedrockAIService {
           description: "Search for products in the database by name, category, or keywords. Use this for general product searches. If location is not provided, user's location will be fetched from their profile for location-based results.",
           parameters: {
             type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "Search query for products"
-            },
-            category: {
-              type: "string",
-              description: "Product category to filter by"
-            },
-            subcategory: {
-              type: "string",
-              description: "Product subcategory to filter by"
-            },
-            brand: {
-              type: "string",
-              description: "Brand name to filter by"
-            },
-            seller_id: {
-              type: "string",
-              description: "Filter by specific seller ID"
-            },
-            latitude: {
-              type: "number",
-              description: "User's latitude for location-based search (optional - will be fetched from profile if not provided)"
-            },
-            longitude: {
-              type: "number",
-              description: "User's longitude for location-based search (optional - will be fetched from profile if not provided)"
-            },
-            radius_km: {
-              type: "number",
-              description: "Search radius in kilometers for location-based results",
-              default: 20
-            },
-            limit: {
-              type: "number",
-              description: "Maximum number of results to return",
-              default: 10
-            },
-            price_range: {
-              type: "object",
-              properties: {
-                min: { type: "number" },
-                max: { type: "number" }
+            properties: {
+              query: {
+                type: "string",
+                description: "Search query for products"
+              },
+              category: {
+                type: "string",
+                description: "Product category to filter by"
+              },
+              subcategory: {
+                type: "string",
+                description: "Product subcategory to filter by"
+              },
+              brand: {
+                type: "string",
+                description: "Brand name to filter by"
+              },
+              seller_id: {
+                type: "string",
+                description: "Filter by specific seller ID"
+              },
+              latitude: {
+                type: "number",
+                description: "User's latitude for location-based search (optional - will be fetched from profile if not provided)"
+              },
+              longitude: {
+                type: "number",
+                description: "User's longitude for location-based search (optional - will be fetched from profile if not provided)"
+              },
+              radius_km: {
+                type: "number",
+                description: "Search radius in kilometers for location-based results",
+                default: 20
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of results to return",
+                default: 10
+              },
+              price_range: {
+                type: "object",
+                properties: {
+                  min: { type: "number" },
+                  max: { type: "number" }
+                }
+              },
+              sort_by: {
+                type: "string",
+                description: "Sort order: popularity, price_low_high, price_high_low, name_a_z, name_z_a",
+                enum: ["popularity", "price_low_high", "price_high_low", "name_a_z", "name_z_a"]
+              },
+              requested_quantity: {
+                type: "number",
+                description: "Quantity requested by user (from image or text). Used for order preview. If less than product's min_quantity, min_quantity will be used.",
+                default: 1
               }
             },
-            sort_by: {
-              type: "string",
-              description: "Sort order: popularity, price_low_high, price_high_low, name_a_z, name_z_a",
-              enum: ["popularity", "price_low_high", "price_high_low", "name_a_z", "name_z_a"]
-            }
-          },
-          required: ["query"]
-        }
+            required: ["query"]
+          }
         }
       },
       {
@@ -424,17 +905,17 @@ class BedrockAIService {
         type: "function",
         function: {
           name: "get_products_by_category",
-          description: "Get all products from a specific category with optional filtering and sorting, including location-based sorting by seller proximity",
+          description: "Get ALL products from a category, subcategory, or by searching product names/descriptions. Use this when user asks for a category or type of products like 'vegetables', 'blades', 'shaving products', 'men's grooming', 'groceries', 'snacks', etc. This function DYNAMICALLY checks database categories/subcategories first, and if no match found, searches in product names and descriptions. Can return up to 200 products. Always use this for category/type browsing requests.",
           parameters: {
             type: "object",
             properties: {
               category: {
                 type: "string",
-                description: "Product category name"
+                description: "Category, subcategory, or product type to search for (case-insensitive). Examples: 'vegetables', 'blades', 'shaving', 'groceries', 'snacks', 'personal care', 'beverages', 'razor'. The function first checks database categories/subcategories, then searches in product names and descriptions if no category match."
               },
               subcategory: {
                 type: "string",
-                description: "Product subcategory name (optional)"
+                description: "Specific subcategory to filter (optional). Examples: 'Shaving', 'Biscuits', 'Soft Drinks'"
               },
               brand: {
                 type: "string",
@@ -468,8 +949,8 @@ class BedrockAIService {
               },
               limit: {
                 type: "number",
-                description: "Maximum number of products",
-                default: 20
+                description: "Maximum number of products to return. Default 50, max 200. Use higher values for browsing full category.",
+                default: 50
               }
             },
             required: ["category"]
@@ -480,22 +961,22 @@ class BedrockAIService {
         type: "function",
         function: {
           name: "add_to_cart",
-          description: "Add a product to the user's shopping cart with specified quantity. User ID is automatically provided.",
+          description: "Add a product to the user's shopping cart. IMPORTANT: product_id must be the UUID returned from search_products, NOT the product name. Always search first to get the UUID.",
           parameters: {
             type: "object",
-          properties: {
-            product_id: {
-              type: "string",
-              description: "ID of the product to add"
+            properties: {
+              product_id: {
+                type: "string",
+                description: "UUID of the product (from search_products results), e.g. '89c401ec-1e47-43ac-9e12-23839b7c742f'. NOT a product name."
+              },
+              quantity: {
+                type: "number",
+                description: "Quantity to add to cart",
+                default: 1
+              }
             },
-            quantity: {
-              type: "number",
-              description: "Quantity to add to cart",
-              default: 1
-            }
-          },
-          required: ["product_id"]
-        }
+            required: ["product_id"]
+          }
         }
       },
       {
@@ -555,7 +1036,7 @@ class BedrockAIService {
           parameters: {
             type: "object",
             properties: {}
-        }
+          }
         }
       },
       {
@@ -565,14 +1046,14 @@ class BedrockAIService {
           description: "Get user's order history. User ID is automatically provided.",
           parameters: {
             type: "object",
-          properties: {
-            limit: {
-              type: "number",
-              description: "Number of orders to return",
-              default: 10
+            properties: {
+              limit: {
+                type: "number",
+                description: "Number of orders to return",
+                default: 10
+              }
             }
           }
-        }
         }
       },
       {
@@ -582,53 +1063,66 @@ class BedrockAIService {
           description: "Get personalized product recommendations prioritized by nearby sellers. User ID is automatically provided. If location is not provided, user's location will be fetched from their profile.",
           parameters: {
             type: "object",
-          properties: {
-            category: {
-              type: "string",
-              description: "Category to get recommendations for"
-            },
-            latitude: {
-              type: "number",
-              description: "User's latitude for location-based recommendations (optional - will be fetched from profile if not provided)"
-            },
-            longitude: {
-              type: "number",
-              description: "User's longitude for location-based recommendations (optional - will be fetched from profile if not provided)"
-            },
-            radius_km: {
-              type: "number",
-              description: "Search radius in kilometers for nearby sellers",
-              default: 50
-            },
-            limit: {
-              type: "number",
-              description: "Number of recommendations",
-              default: 5
+            properties: {
+              category: {
+                type: "string",
+                description: "Category to get recommendations for"
+              },
+              latitude: {
+                type: "number",
+                description: "User's latitude for location-based recommendations (optional - will be fetched from profile if not provided)"
+              },
+              longitude: {
+                type: "number",
+                description: "User's longitude for location-based recommendations (optional - will be fetched from profile if not provided)"
+              },
+              radius_km: {
+                type: "number",
+                description: "Search radius in kilometers for nearby sellers",
+                default: 50
+              },
+              limit: {
+                type: "number",
+                description: "Number of recommendations",
+                default: 5
+              }
             }
           }
-        }
         }
       },
       {
         type: "function",
         function: {
           name: "place_order",
-          description: "Place an order with items from the user's cart using Cash on Delivery. The system automatically splits orders by seller and calculates delivery fees. User ID and location are automatically provided.",
+          description: "Place an order directly with specified items OR use items from cart. Can accept items array directly for quick ordering from image product lists. User ID and location are automatically provided.",
           parameters: {
-          type: "object",
-          properties: {
-            delivery_instructions: {
-              type: "string",
-              description: "Special delivery instructions or notes (optional)"
-            },
-            payment_method: {
-              type: "string",
-              description: "Payment method - defaults to cod (Cash on Delivery)",
-              default: "cod",
-              enum: ["cod"]
+            type: "object",
+            properties: {
+              items: {
+                type: "array",
+                description: "Array of items to order directly (optional - if not provided, uses cart items). Each item needs: product_id (UUID), quantity, unit_price",
+                items: {
+                  type: "object",
+                  properties: {
+                    product_id: { type: "string", description: "Product UUID from search_products" },
+                    quantity: { type: "number", description: "Quantity to order" },
+                    unit_price: { type: "number", description: "Price per unit" }
+                  },
+                  required: ["product_id", "quantity", "unit_price"]
+                }
+              },
+              delivery_instructions: {
+                type: "string",
+                description: "Special delivery instructions or notes (optional)"
+              },
+              payment_method: {
+                type: "string",
+                description: "Payment method - defaults to cod (Cash on Delivery)",
+                default: "cod",
+                enum: ["cod"]
+              }
             }
           }
-        }
         }
       },
       {
@@ -692,7 +1186,7 @@ class BedrockAIService {
                 description: "User's current latitude (optional - will be fetched from profile if not provided)"
               },
               longitude: {
-                type: "number", 
+                type: "number",
                 description: "User's current longitude (optional - will be fetched from profile if not provided)"
               },
               radius_km: {
@@ -728,7 +1222,7 @@ class BedrockAIService {
               },
               radius_km: {
                 type: "number",
-                description: "Search radius in kilometers", 
+                description: "Search radius in kilometers",
                 default: 50
               },
               limit: {
@@ -1014,16 +1508,36 @@ class BedrockAIService {
     ];
   }
 
+  // Convert tools to Claude format (Anthropic uses different structure)
+  private getClaudeTools() {
+    const openAITools = this.getAvailableTools();
+    // Claude tool format: { name, description, input_schema }
+    // OpenAI format: { type: "function", function: { name, description, parameters } }
+    return openAITools.map(tool => ({
+      name: tool.function.name,
+      description: tool.function.description,
+      input_schema: tool.function.parameters
+    }));
+  }
+
   // Execute function calls - made public for external access
+  // Returns both formatted string and raw results for direct parsing
   async executeFunctionCalls(functionCalls: AIFunctionCall[], userId: string): Promise<string> {
+    const { formattedResult } = await this.executeFunctionCallsWithRaw(functionCalls, userId);
+    return formattedResult;
+  }
+
+  // Execute function calls with raw results - for parsing product data
+  async executeFunctionCallsWithRaw(functionCalls: AIFunctionCall[], userId: string): Promise<{ formattedResult: string; rawResults: Record<string, any> }> {
     const results: string[] = [];
-    
+    const rawResults: Record<string, any> = {};
+
     for (const call of functionCalls) {
       console.log(`Executing function: ${call.name} with parameters:`, call.parameters);
-      
+
       try {
         let result: any;
-        
+
         switch (call.name) {
           case 'search_products':
             result = await this.searchProducts(call.parameters);
@@ -1115,7 +1629,10 @@ class BedrockAIService {
             console.warn(`Unknown function: ${call.name}`);
             result = { error: `Unknown function: ${call.name}` };
         }
-        
+
+        // Store raw result for direct access
+        rawResults[call.name] = result;
+
         // Enhanced result logging and error handling
         if (result && result.error) {
           console.error(`Function ${call.name} returned error:`, result.error);
@@ -1127,20 +1644,21 @@ class BedrockAIService {
           console.log(`Function ${call.name} returned empty array`);
           results.push(`${call.name}: No results found`);
         } else {
-          console.log(`Function ${call.name} executed successfully, result length:`, 
+          console.log(`Function ${call.name} executed successfully, result length:`,
             Array.isArray(result) ? result.length : typeof result);
           results.push(`${call.name}: ${JSON.stringify(result, null, 2)}`);
         }
-        
+
       } catch (error) {
         console.error(`Error executing function ${call.name}:`, error);
         results.push(`Error in ${call.name}: ${error.message}`);
+        rawResults[call.name] = { error: error.message };
       }
     }
-    
+
     const combinedResult = results.join('\n\n');
-    console.log('Combined function execution results:', combinedResult);
-    return combinedResult;
+    console.log('Combined function execution results:', combinedResult.substring(0, 500));
+    return { formattedResult: combinedResult, rawResults };
   }
 
   // Make executeFunction public for external access
@@ -1148,11 +1666,11 @@ class BedrockAIService {
     try {
       const results = await this.executeFunctionCalls([functionCall]);
       const result = results[0];
-      
+
       if (result.error) {
         return { success: false, error: result.error };
       }
-      
+
       return { success: true, data: result.result };
     } catch (error) {
       return { success: false, error: error.message };
@@ -1161,9 +1679,11 @@ class BedrockAIService {
 
   // Function implementations
   private async searchProducts(params: any) {
-    const { query, category, subcategory, brand, seller_id, limit = 10, price_range, sort_by, radius_km = 20 } = params;
+    const { query, category, subcategory, brand, seller_id, limit = 10, price_range, sort_by, radius_km = 100 } = params;
     let { latitude, longitude } = params;
-    
+
+    console.log(`[searchProducts] Query: "${query}", Radius: ${radius_km}km, Limit: ${limit}`);
+
     // Fetch user location from profiles table if not provided
     if (!latitude || !longitude) {
       try {
@@ -1176,10 +1696,12 @@ class BedrockAIService {
         if (!profileError && userProfile) {
           latitude = userProfile.latitude;
           longitude = userProfile.longitude;
-          console.log(`Fetched user location from profile: ${latitude}, ${longitude}, ${userProfile.location_address}`);
+          console.log(`[searchProducts] User location: ${latitude}, ${longitude}, ${userProfile.location_address}`);
+        } else {
+          console.log('[searchProducts] No user location found, will search all products');
         }
       } catch (error) {
-        console.log('Could not fetch user location from profile:', error);
+        console.log('[searchProducts] Could not fetch user location:', error);
       }
     }
 
@@ -1188,56 +1710,110 @@ class BedrockAIService {
       try {
         // Import ProductSearchService for location-based search
         const ProductSearchService = (await import('../productSearchService')).default;
-        
-        const searchOptions = {
-          query,
-          userLatitude: latitude,
-          userLongitude: longitude,
-          radiusKm: radius_km,
-          limit,
-          includeOutOfStock: false
-        };
 
-        const locationBasedResults = await ProductSearchService.searchProducts(searchOptions);
-        
-        // Apply additional filters to location-based results
-        let filteredResults = locationBasedResults.products || [];
-        
-        if (category) {
-          const genericCategories = ['groceries', 'food', 'items', 'products', 'goods'];
-          if (!genericCategories.includes(category.toLowerCase())) {
-            filteredResults = filteredResults.filter((product: any) => 
-              product.category?.toLowerCase() === category.toLowerCase()
+        // Progressive radius search: first 20km, then expand to 50km if no results
+        const radiusLevels = [20, 50];
+        let filteredResults: any[] = [];
+
+        for (const currentRadius of radiusLevels) {
+          const searchOptions = {
+            query,
+            userLatitude: latitude,
+            userLongitude: longitude,
+            radiusKm: currentRadius,
+            limit,
+            includeOutOfStock: false
+          };
+
+          console.log(`[searchProducts] Searching within ${currentRadius}km radius...`);
+          const locationBasedResults = await ProductSearchService.searchProducts(searchOptions);
+
+          // Apply additional filters to location-based results
+          filteredResults = locationBasedResults.products || [];
+
+          // Get meaningful search words for relevance filtering
+          const stopWords = ['show', 'me', 'find', 'search', 'for', 'get', 'want', 'need', 'buy', 'order'];
+          const queryWords = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 1);
+          const searchWords = queryWords.filter((w: string) => !stopWords.includes(w));
+          const meaningfulWords = searchWords.length > 0 ? searchWords : queryWords;
+
+          // PRIMARY WORD (usually brand name) MUST match for strict relevance
+          const primaryWord = meaningfulWords[0] || query.toLowerCase().split(/\s+/)[0];
+
+          // Filter for strict relevance - primary word MUST be in product name or brand
+          if (primaryWord) {
+            filteredResults = filteredResults.filter((product: any) => {
+              const productName = (product.name || '').toLowerCase();
+              const productBrand = (product.brand || '').toLowerCase();
+              const productNameAndBrand = `${productName} ${productBrand}`;
+              return productNameAndBrand.includes(primaryWord);
+            });
+          }
+
+          if (category) {
+            const genericCategories = ['groceries', 'food', 'items', 'products', 'goods'];
+            if (!genericCategories.includes(category.toLowerCase())) {
+              filteredResults = filteredResults.filter((product: any) =>
+                product.category?.toLowerCase() === category.toLowerCase()
+              );
+            }
+          }
+
+          if (subcategory) {
+            filteredResults = filteredResults.filter((product: any) =>
+              product.subcategory?.toLowerCase() === subcategory.toLowerCase()
             );
           }
+
+          if (brand) {
+            filteredResults = filteredResults.filter((product: any) =>
+              product.brand?.toLowerCase() === brand.toLowerCase()
+            );
+          }
+
+          if (seller_id) {
+            filteredResults = filteredResults.filter((product: any) =>
+              product.seller_id === seller_id
+            );
+          }
+
+          if (price_range) {
+            filteredResults = filteredResults.filter((product: any) => {
+              const price = parseFloat(product.price);
+              return (!price_range.min || price >= price_range.min) &&
+                (!price_range.max || price <= price_range.max);
+            });
+          }
+
+          // If we found results, stop expanding radius
+          if (filteredResults.length > 0) {
+            console.log(`[searchProducts] Found ${filteredResults.length} products within ${currentRadius}km`);
+            break;
+          } else {
+            console.log(`[searchProducts] No products found within ${currentRadius}km, expanding search...`);
+          }
         }
-        
-        if (subcategory) {
-          filteredResults = filteredResults.filter((product: any) => 
-            product.subcategory?.toLowerCase() === subcategory.toLowerCase()
-          );
-        }
-        
-        if (brand) {
-          filteredResults = filteredResults.filter((product: any) => 
-            product.brand?.toLowerCase() === brand.toLowerCase()
-          );
-        }
-        
-        if (seller_id) {
-          filteredResults = filteredResults.filter((product: any) => 
-            product.seller_id === seller_id
-          );
-        }
-        
-        if (price_range) {
-          filteredResults = filteredResults.filter((product: any) => {
-            const price = parseFloat(product.price);
-            return (!price_range.min || price >= price_range.min) && 
-                   (!price_range.max || price <= price_range.max);
-          });
-        }
-        
+
+        // Sort by relevance: products with more matching words come first
+        const queryWordsForSort = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 1);
+        filteredResults.sort((a: any, b: any) => {
+          const aName = (a.name || '').toLowerCase();
+          const bName = (b.name || '').toLowerCase();
+
+          // Count how many search words match in each product name
+          const aMatches = queryWordsForSort.filter((w: string) => aName.includes(w)).length;
+          const bMatches = queryWordsForSort.filter((w: string) => bName.includes(w)).length;
+
+          // Products with full query match come first
+          const aFullMatch = aName.includes(query.toLowerCase()) ? 1 : 0;
+          const bFullMatch = bName.includes(query.toLowerCase()) ? 1 : 0;
+
+          // Sort by full match first, then by word match count, then by distance
+          if (bFullMatch !== aFullMatch) return bFullMatch - aFullMatch;
+          if (bMatches !== aMatches) return bMatches - aMatches;
+          return (a.distance_km || 0) - (b.distance_km || 0);  // Closer products first
+        });
+
         // Apply sorting
         if (sort_by === 'price_low_high') {
           filteredResults.sort((a: any, b: any) => parseFloat(a.price) - parseFloat(b.price));
@@ -1248,16 +1824,78 @@ class BedrockAIService {
         } else if (sort_by === 'name_z_a') {
           filteredResults.sort((a: any, b: any) => b.name.localeCompare(a.name));
         }
-        
+
         return filteredResults.slice(0, limit);
-        
+
       } catch (error) {
         console.log('Location-based search failed, falling back to regular search:', error);
         // Fall through to regular search
       }
     }
-    
+
     // Fallback to regular search if location is not available or location-based search fails
+    console.log('[searchProducts] Using fallback direct database search...');
+
+    // Intelligent query processing - split into words and create focused search conditions
+    const queryWords = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 1);
+
+    // Remove common words that add noise
+    const stopWords = ['show', 'me', 'find', 'search', 'for', 'get', 'want', 'need', 'buy', 'order'];
+    const meaningfulWords = queryWords.filter(w => !stopWords.includes(w));
+
+    // Use meaningful words if available, otherwise use all query words
+    let searchWords = meaningfulWords.length > 0 ? meaningfulWords : queryWords;
+
+    // FUZZY BRAND MATCHING: Expand common brand variations
+    const brandVariations: Record<string, string[]> = {
+      'parleg': ['parle', 'parle-g', 'parle g'],
+      'parle': ['parle-g', 'parle g', 'parleg'],
+      'britannia': ['britania'],
+      'goodday': ['good day', 'good-day'],
+      'maggi': ['maggie', 'magi'],
+      'nestle': ['nestlé'],
+      'amul': ['amool'],
+    };
+
+    // Expand search words with variations
+    const expandedWords: string[] = [...searchWords];
+    for (const word of searchWords) {
+      if (brandVariations[word]) {
+        expandedWords.push(...brandVariations[word]);
+      }
+    }
+    searchWords = [...new Set(expandedWords)]; // Deduplicate
+
+    console.log('[searchProducts] Expanded search words:', searchWords);
+
+    // Build focused search conditions - prioritize name and brand matches
+    const searchConditions: string[] = [];
+
+    // Strategy 1: Search for the full query in name/brand only (not description to avoid noise)
+    searchConditions.push(`name.ilike.%${query}%`);
+    searchConditions.push(`brand.ilike.%${query}%`);
+
+    // Strategy 2: Search for each search word (including variations) in name/brand
+    for (const word of searchWords) {
+      searchConditions.push(`name.ilike.%${word}%`);
+      searchConditions.push(`brand.ilike.%${word}%`);
+    }
+
+    // Strategy 3: Search for combinations of adjacent words (for brand-product combos like "parle g")
+    if (searchWords.length >= 2) {
+      for (let i = 0; i < searchWords.length - 1; i++) {
+        const combo = `${searchWords[i]} ${searchWords[i + 1]}`;
+        searchConditions.push(`name.ilike.%${combo}%`);
+      }
+      // Also try with hyphen (e.g., "parle-g")
+      for (let i = 0; i < searchWords.length - 1; i++) {
+        const combo = `${searchWords[i]}-${searchWords[i + 1]}`;
+        searchConditions.push(`name.ilike.%${combo}%`);
+      }
+    }
+
+    console.log('[searchProducts] Search words:', searchWords, 'Conditions count:', searchConditions.length);
+
     let queryBuilder = supabase
       .from('products')
       .select(`
@@ -1268,9 +1906,9 @@ class BedrockAIService {
           seller_details (business_name, seller_type)
         )
       `)
-      .or(`name.ilike.%${query}%,category.ilike.%${query}%,subcategory.ilike.%${query}%,brand.ilike.%${query}%`)
+      .or(searchConditions.join(','))
       .gt('stock_available', 0)
-      .limit(limit);
+      .limit(limit * 3);  // Fetch more to filter for relevance
 
     // Only apply category filter if it's explicitly provided and looks valid
     // Don't use generic terms like "groceries", "food", etc.
@@ -1308,15 +1946,64 @@ class BedrockAIService {
     }
 
     const { data, error } = await queryBuilder;
-    
+
     if (error) throw error;
-    return data || [];
+
+    // Relevance filtering - check if ANY of the search words (including variations) match
+    // For "parleg" -> searchWords includes ["parleg", "parle", "parle-g", "parle g"]
+    console.log('[searchProducts] Filtering with search words:', searchWords);
+
+    const filteredData = (data || []).filter((product: any) => {
+      const productName = (product.name || '').toLowerCase();
+      const productBrand = (product.brand || '').toLowerCase();
+      const productNameAndBrand = `${productName} ${productBrand}`;
+
+      // Check if ANY search word matches the product name or brand
+      const hasAnyMatch = searchWords.some((word: string) => productNameAndBrand.includes(word));
+
+      if (!hasAnyMatch) {
+        // Only log first few filtered products to avoid spam
+        if (filteredData.length < 3) {
+          console.log('[searchProducts] Filtering out (no match):', product.name);
+        }
+        return false;
+      }
+
+      return true;
+    });
+
+    // Sort by relevance: products with more matching words come first
+    const primarySearchWord = searchWords[0] || '';
+    filteredData.sort((a: any, b: any) => {
+      const aName = (a.name || '').toLowerCase();
+      const bName = (b.name || '').toLowerCase();
+      const aBrand = (a.brand || '').toLowerCase();
+      const bBrand = (b.brand || '').toLowerCase();
+
+      // Count how many search words match in each product
+      const aMatches = searchWords.filter((w: string) => aName.includes(w) || aBrand.includes(w)).length;
+      const bMatches = searchWords.filter((w: string) => bName.includes(w) || bBrand.includes(w)).length;
+
+      // Products with full query match come first
+      const aFullMatch = aName.includes(query.toLowerCase()) ? 2 :
+        aName.includes(primarySearchWord) && aBrand.includes(primarySearchWord) ? 1 : 0;
+      const bFullMatch = bName.includes(query.toLowerCase()) ? 2 :
+        bName.includes(primarySearchWord) && bBrand.includes(primarySearchWord) ? 1 : 0;
+
+      // Sort by full match first, then by word match count
+      if (bFullMatch !== aFullMatch) return bFullMatch - aFullMatch;
+      return bMatches - aMatches;
+    });
+
+    console.log('[searchProducts] Filtered from', data?.length, 'to', filteredData.length, 'relevant results');
+
+    return filteredData.slice(0, limit);
   }
 
   // View detailed product information
   private async viewProductDetails(params: any) {
     const { product_id } = params;
-    
+
     try {
       const { data, error } = await supabase
         .from('products')
@@ -1326,7 +2013,7 @@ class BedrockAIService {
           profiles!seller_id (
             id,
             business_details,
-            seller_details (business_name, seller_type, business_description, contact_phone, business_address)
+            seller_details (business_name, seller_type)
           )
         `)
         .eq('id', product_id)
@@ -1340,14 +2027,92 @@ class BedrockAIService {
     }
   }
 
-  // Get products by category with advanced filtering
+  // Fetch available categories and subcategories from the database
+  private async getAvailableCategoriesFromDB(): Promise<{ categories: string[]; subcategories: string[] }> {
+    try {
+      // Get distinct categories
+      const { data: categoryData } = await supabase
+        .from('products')
+        .select('category')
+        .not('category', 'is', null)
+        .gt('stock_available', 0);
+
+      // Get distinct subcategories
+      const { data: subcategoryData } = await supabase
+        .from('products')
+        .select('subcategory')
+        .not('subcategory', 'is', null)
+        .gt('stock_available', 0);
+
+      const categories = [...new Set((categoryData || []).map(d => d.category).filter(Boolean))];
+      const subcategories = [...new Set((subcategoryData || []).map(d => d.subcategory).filter(Boolean))];
+
+      console.log('[getAvailableCategoriesFromDB] Found categories:', categories);
+      console.log('[getAvailableCategoriesFromDB] Found subcategories:', subcategories);
+
+      return { categories, subcategories };
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      return { categories: [], subcategories: [] };
+    }
+  }
+
+  // Find matching category/subcategory from database using fuzzy matching
+  private findMatchingCategoryOrSubcategory(
+    query: string,
+    categories: string[],
+    subcategories: string[]
+  ): { matchedCategory: string | null; matchedSubcategory: string | null; isExactMatch: boolean } {
+    const lowerQuery = query.toLowerCase().trim();
+
+    // Check for exact match in categories (case-insensitive)
+    for (const cat of categories) {
+      if (cat.toLowerCase() === lowerQuery) {
+        return { matchedCategory: cat, matchedSubcategory: null, isExactMatch: true };
+      }
+    }
+
+    // Check for exact match in subcategories (case-insensitive)
+    for (const subcat of subcategories) {
+      if (subcat.toLowerCase() === lowerQuery) {
+        return { matchedCategory: null, matchedSubcategory: subcat, isExactMatch: true };
+      }
+    }
+
+    // Check for partial match in categories (query is contained in category or vice versa)
+    for (const cat of categories) {
+      const lowerCat = cat.toLowerCase();
+      if (lowerCat.includes(lowerQuery) || lowerQuery.includes(lowerCat)) {
+        return { matchedCategory: cat, matchedSubcategory: null, isExactMatch: false };
+      }
+    }
+
+    // Check for partial match in subcategories
+    for (const subcat of subcategories) {
+      const lowerSubcat = subcat.toLowerCase();
+      if (lowerSubcat.includes(lowerQuery) || lowerQuery.includes(lowerSubcat)) {
+        return { matchedCategory: null, matchedSubcategory: subcat, isExactMatch: false };
+      }
+    }
+
+    // No category/subcategory match found
+    return { matchedCategory: null, matchedSubcategory: null, isExactMatch: false };
+  }
+
+  // Get products by category with advanced filtering and intelligent matching
+  // This function dynamically checks database categories and falls back to name/description search
   private async getProductsByCategory(params: any, userId?: string) {
-    const { category, subcategory, brand, price_min, price_max, latitude, longitude, radius_km = 100, sort_by, limit = 20 } = params;
-    
+    const { category, subcategory, brand, price_min, price_max, latitude, longitude, radius_km = 100, sort_by, limit = 50 } = params;
+
+    // Enforce a reasonable max limit (can be increased if needed)
+    const effectiveLimit = Math.min(limit, 200);
+
+    console.log('[getProductsByCategory] Searching for category:', category, 'subcategory:', subcategory);
+
     try {
       let userLat = latitude;
       let userLng = longitude;
-      
+
       // Fetch user location from profile if not provided but userId is available
       if ((!userLat || !userLng) && userId) {
         const { data: profile } = await supabase
@@ -1355,13 +2120,33 @@ class BedrockAIService {
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profile?.latitude && profile?.longitude) {
           userLat = profile.latitude;
           userLng = profile.longitude;
         }
       }
-      
+
+      // Step 1: Fetch available categories and subcategories from the database
+      const { categories, subcategories } = await this.getAvailableCategoriesFromDB();
+
+      // Step 2: Try to match the search term to a category or subcategory
+      const searchTerm = category || '';
+      const { matchedCategory, matchedSubcategory, isExactMatch } = this.findMatchingCategoryOrSubcategory(
+        searchTerm,
+        categories,
+        subcategories
+      );
+
+      console.log('[getProductsByCategory] Match result:', {
+        searchTerm,
+        matchedCategory,
+        matchedSubcategory,
+        isExactMatch,
+        providedSubcategory: subcategory
+      });
+
+      // Build query
       let queryBuilder = supabase
         .from('products')
         .select(`
@@ -1374,15 +2159,40 @@ class BedrockAIService {
             seller_details (business_name, seller_type, latitude, longitude)
           )
         `)
-        .eq('category', category)
         .gt('stock_available', 0);
 
+      // Step 3: Apply filters based on what we found
       if (subcategory) {
-        queryBuilder = queryBuilder.eq('subcategory', subcategory);
+        // If explicit subcategory is provided, use it
+        queryBuilder = queryBuilder.ilike('subcategory', `%${subcategory}%`);
+        if (matchedCategory) {
+          queryBuilder = queryBuilder.ilike('category', `%${matchedCategory}%`);
+        }
+      } else if (matchedCategory) {
+        // Exact or partial category match found
+        if (isExactMatch) {
+          queryBuilder = queryBuilder.ilike('category', matchedCategory);
+        } else {
+          queryBuilder = queryBuilder.ilike('category', `%${matchedCategory}%`);
+        }
+      } else if (matchedSubcategory) {
+        // Subcategory match found
+        if (isExactMatch) {
+          queryBuilder = queryBuilder.ilike('subcategory', matchedSubcategory);
+        } else {
+          queryBuilder = queryBuilder.ilike('subcategory', `%${matchedSubcategory}%`);
+        }
+      } else {
+        // No category/subcategory match - search in name, description, and brand
+        // This handles cases like "blades" which might be in product name or description
+        console.log('[getProductsByCategory] No category match, searching in name/description for:', searchTerm);
+        queryBuilder = queryBuilder.or(
+          `name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%,category.ilike.%${searchTerm}%,subcategory.ilike.%${searchTerm}%`
+        );
       }
 
       if (brand) {
-        queryBuilder = queryBuilder.eq('brand', brand);
+        queryBuilder = queryBuilder.ilike('brand', `%${brand}%`);
       }
 
       if (price_min !== undefined) {
@@ -1402,15 +2212,22 @@ class BedrockAIService {
         queryBuilder = queryBuilder.order('name', { ascending: true });
       } else if (sort_by === 'name_z_a') {
         queryBuilder = queryBuilder.order('name', { ascending: false });
+      } else {
+        // Default: sort by name
+        queryBuilder = queryBuilder.order('name', { ascending: true });
       }
 
+      // Fetch more than limit to allow for distance filtering
+      queryBuilder = queryBuilder.limit(effectiveLimit * 2);
+
       const { data: products, error } = await queryBuilder;
-      
+
       if (error) throw error;
-      
+
       let result = products || [];
-      
-      // If user location is available and distance sorting is requested or no specific sort is requested
+      console.log('[getProductsByCategory] Found', result.length, 'products before distance filtering');
+
+      // If user location is available, calculate distances
       if (userLat && userLng && result.length > 0) {
         // Calculate distances for all products
         result = result.map(product => {
@@ -1418,7 +2235,7 @@ class BedrockAIService {
           // Use seller_details location first, then profile location
           const sellerLat = sellerProfile?.seller_details?.latitude || sellerProfile?.latitude;
           const sellerLng = sellerProfile?.seller_details?.longitude || sellerProfile?.longitude;
-          
+
           if (sellerLat && sellerLng) {
             const distance = this.calculateDistance(
               userLat, userLng,
@@ -1428,17 +2245,26 @@ class BedrockAIService {
           }
           return { ...product, distance_km: Infinity };
         });
-        
-        // Filter by radius if location-based
-        if (sort_by === 'distance') {
-          result = result
-            .filter(product => product.distance_km <= radius_km)
-            .sort((a, b) => a.distance_km - b.distance_km);
+
+        // Filter by radius
+        result = result.filter(product => product.distance_km <= radius_km);
+
+        // Sort by distance if requested, or as secondary sort
+        if (sort_by === 'distance' || !sort_by) {
+          result = result.sort((a, b) => a.distance_km - b.distance_km);
         }
       }
-      
+
       // Apply limit after all processing
-      return result.slice(0, limit);
+      const finalResult = result.slice(0, effectiveLimit);
+
+      // Log what we're returning
+      const matchInfo = matchedCategory ? `category: ${matchedCategory}` :
+        matchedSubcategory ? `subcategory: ${matchedSubcategory}` :
+          'name/description search';
+      console.log('[getProductsByCategory] Returning', finalResult.length, 'products via', matchInfo);
+
+      return finalResult;
     } catch (error) {
       console.error('Error getting products by category:', error);
       return { error: `Failed to get products: ${error.message}` };
@@ -1447,7 +2273,7 @@ class BedrockAIService {
 
   private async addToCart(params: any, userId: string) {
     const { product_id, quantity = 1 } = params;
-    
+
     try {
       // Get product details first
       const { data: product, error: productError } = await supabase
@@ -1455,10 +2281,10 @@ class BedrockAIService {
         .select('id, name, price, image_url, unit, seller_id')
         .eq('id', product_id)
         .single();
-      
+
       if (productError) throw productError;
       if (!product) throw new Error('Product not found');
-      
+
       // Use the cart store's addToCart function
       const cartItem = {
         uniqueId: '', // Will be set by database
@@ -1470,9 +2296,9 @@ class BedrockAIService {
         unit: product.unit || '',
         seller_id: product.seller_id
       };
-      
+
       await useCartStore.getState().addToCart(cartItem);
-      
+
       return {
         message: 'Added to cart successfully',
         product: product.name,
@@ -1500,13 +2326,13 @@ class BedrockAIService {
       // Fetch product details for all cart items
       const productIds = [...new Set(cartRows.map(r => r.product_id).filter(Boolean))];
       let productMap = new Map<string, any>();
-      
+
       if (productIds.length > 0) {
         const { data: products, error: prodErr } = await supabase
           .from('products')
           .select('id, name, image_url, unit')
           .in('id', productIds);
-        
+
         if (prodErr) throw prodErr;
         productMap = new Map(products.map(p => [p.id, p]));
       }
@@ -1534,7 +2360,7 @@ class BedrockAIService {
   // Remove item from cart
   private async removeFromCart(params: any, userId: string) {
     const { cart_item_id } = params;
-    
+
     try {
       const { error } = await supabase
         .from('cart_items')
@@ -1556,7 +2382,7 @@ class BedrockAIService {
   // Update cart item quantity
   private async updateCartQuantity(params: any, userId: string) {
     const { cart_item_id, quantity } = params;
-    
+
     try {
       if (quantity < 1) {
         throw new Error('Quantity must be at least 1');
@@ -1605,18 +2431,18 @@ class BedrockAIService {
       .eq('user_id', userId)  // Changed from user_id param
       .order('created_at', { ascending: false })
       .limit(limit);
-    
+
     if (error) throw error;
     return data;
   }
 
   private async getProductRecommendations(params: any, userId: string) {
     const { category, latitude, longitude, radius_km = 50, limit = 5 } = params;
-    
+
     try {
       let userLat = latitude;
       let userLng = longitude;
-      
+
       // Fetch user location from profile if not provided
       if (!userLat || !userLng) {
         const { data: profile } = await supabase
@@ -1624,13 +2450,13 @@ class BedrockAIService {
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profile?.latitude && profile?.longitude) {
           userLat = profile.latitude;
           userLng = profile.longitude;
         }
       }
-      
+
       // If we have location, prioritize products from nearby sellers
       if (userLat && userLng) {
         // Get products with seller location information
@@ -1651,9 +2477,9 @@ class BedrockAIService {
         }
 
         const { data: products, error } = await queryBuilder;
-        
+
         if (error) throw error;
-        
+
         if (products && products.length > 0) {
           // Calculate distances and sort by proximity
           const productsWithDistance = products
@@ -1671,11 +2497,11 @@ class BedrockAIService {
             .filter(product => product.distance_km <= radius_km)
             .sort((a, b) => a.distance_km - b.distance_km)
             .slice(0, limit);
-          
+
           return productsWithDistance;
         }
       }
-      
+
       // Fallback to simple category-based recommendations
       let queryBuilder = supabase
         .from('products')
@@ -1691,7 +2517,7 @@ class BedrockAIService {
       }
 
       const { data, error } = await queryBuilder;
-      
+
       if (error) throw error;
       return data || [];
     } catch (error) {
@@ -1701,19 +2527,51 @@ class BedrockAIService {
   }
 
   private async placeOrder(params: any, userId: string) {
-    const { delivery_instructions, payment_method = 'cod' } = params;
-    
-    try {
-      // Get cart items directly from database
-      const { data: cartRows, error: cartError } = await supabase
-        .from('cart_items')
-        .select('id, quantity, price, product_id, seller_id')
-        .eq('retailer_id', userId);
+    const { items: directItems, delivery_instructions, payment_method = 'cod' } = params;
 
-      if (cartError) throw cartError;
+    try {
+      let cartRows: any[] = [];
+
+      // Check if direct items are provided (for image-based ordering)
+      if (directItems && Array.isArray(directItems) && directItems.length > 0) {
+        console.log('[PlaceOrder] Using direct items:', directItems.length);
+
+        // Get product details for direct items
+        const productIds = directItems.map((item: any) => item.product_id);
+        const { data: products, error: prodError } = await supabase
+          .from('products')
+          .select('id, name, unit, seller_id')
+          .in('id', productIds);
+
+        if (prodError) throw prodError;
+
+        const productMap = new Map(products?.map(p => [p.id, p]) || []);
+
+        // Build cart rows from direct items
+        cartRows = directItems.map((item: any) => {
+          const product = productMap.get(item.product_id);
+          return {
+            id: `direct_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            quantity: item.quantity,
+            price: item.unit_price,
+            product_id: item.product_id,
+            seller_id: product?.seller_id || null
+          };
+        });
+      } else {
+        // Get cart items from database
+        console.log('[PlaceOrder] Using cart items for user:', userId);
+        const { data: cartData, error: cartError } = await supabase
+          .from('cart_items')
+          .select('id, quantity, price, product_id, seller_id')
+          .eq('retailer_id', userId);
+
+        if (cartError) throw cartError;
+        cartRows = cartData || [];
+      }
 
       if (!cartRows || cartRows.length === 0) {
-        throw new Error('Cart is empty');
+        throw new Error('No items to order. Please add items to your order.');
       }
 
       // Get product details
@@ -1777,18 +2635,18 @@ class BedrockAIService {
 
       // Calculate distance to each seller
       const sellerDistances: Record<string, { distance: number; location: { latitude: number; longitude: number } }> = {};
-      
+
       for (const sellerId of Object.keys(itemsBySeller)) {
         const { data: sellerData, error: sellerError } = await supabase
           .from('seller_details')
           .select('latitude, longitude')
           .eq('user_id', sellerId)
           .single();
-          
+
         if (sellerError || !sellerData?.latitude || !sellerData?.longitude) {
           throw new Error(`Unable to get location for seller ${sellerId}`);
         }
-        
+
         const sellerLocation = {
           latitude: Number(sellerData.latitude),
           longitude: Number(sellerData.longitude)
@@ -1806,18 +2664,18 @@ class BedrockAIService {
 
       // Find farthest seller for delivery fee calculation
       const farthestSeller = Object.entries(sellerDistances).reduce(
-        (farthest, [sellerId, data]) => 
+        (farthest, [sellerId, data]) =>
           data.distance > farthest.distance ? { sellerId, distance: data.distance } : farthest,
         { sellerId: '', distance: 0 }
       );
 
       // Calculate total amount and delivery fee
-      const totalAmount = cartItems.reduce((sum, item) => 
+      const totalAmount = cartItems.reduce((sum, item) =>
         sum + (parseFloat(item.price) * item.quantity), 0
       );
-      
+
       const totalItemCount = cartItems.reduce((count, item) => count + item.quantity, 0);
-      
+
       const deliveryFeeDetails = useCartStore.getState().calculateDeliveryFee(
         totalAmount,
         totalItemCount,
@@ -1836,15 +2694,15 @@ class BedrockAIService {
 
       // Prepare orders by seller
       const ordersBySeller: Record<string, any> = {};
-      
+
       for (const [sellerId, sellerItems] of Object.entries(itemsBySeller)) {
-        const subtotal = sellerItems.reduce((total, item) => 
+        const subtotal = sellerItems.reduce((total, item) =>
           total + (parseFloat(item.price) * item.quantity), 0
         );
-        
+
         // Only farthest seller pays delivery fee
         const deliveryFeeForSeller = sellerId === farthestSeller.sellerId ? deliveryFeeDetails.fee : 0;
-        
+
         ordersBySeller[sellerId] = {
           user_id: userId,
           seller_id: sellerId,
@@ -1852,6 +2710,7 @@ class BedrockAIService {
             product_id: item.product_id,
             quantity: item.quantity,
             price: item.price,
+            unit_price: item.price,
             name: item.name,
             unit: item.unit
           })),
@@ -1859,29 +2718,24 @@ class BedrockAIService {
           delivery_fee: deliveryFeeForSeller,
           status: 'pending',
           payment_method: payment_method,
-          delivery_address: userProfile.business_details?.shopName 
+          delivery_address: userProfile.business_details?.shopName
             ? `${userProfile.business_details.shopName}, ${userProfile.business_details?.address || ''}`
             : userProfile.business_details?.address || '',
           order_number: generateOrderNumber(),
         };
       }
 
-      // Use MasterOrderService to place the complete order
-      const { MasterOrderService } = await import('../../services/masterOrderService');
-      
-      const result = await MasterOrderService.placeCompleteOrder(
-        userId,
-        ordersBySeller,
-        deliveryAddress,
-        totalAmount,
-        deliveryFeeDetails.fee,
-        payment_method,
-        delivery_instructions
-      );
+      // Use the AI order placement service (matches checkout flow exactly)
+      const { placeMultiSellerAIOrder } = await import('../../services/aiOrderPlacement');
 
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to place order');
+      const orderResult = await placeMultiSellerAIOrder(userId, ordersBySeller);
+
+      if (!orderResult.success) {
+        const errors = orderResult.orders.filter(o => !o.success).map(o => o.error).join(', ');
+        throw new Error(`Failed to place order: ${errors}`);
       }
+
+      const successfulOrders = orderResult.orders.filter(o => o.success);
 
       // Clear cart after successful order
       await supabase
@@ -1890,13 +2744,14 @@ class BedrockAIService {
         .eq('retailer_id', userId);
 
       return {
-        message: 'Order placed successfully with Cash on Delivery',
-        master_order_id: result.masterOrderId,
+        message: `Order placed successfully! ${successfulOrders.length} order(s) created.`,
+        order_ids: successfulOrders.map(o => o.orderId),
+        order_numbers: successfulOrders.map(o => o.orderNumber),
         total_amount: totalAmount,
         delivery_fee: deliveryFeeDetails.fee,
         total_with_delivery: totalAmount + deliveryFeeDetails.fee,
         items_count: cartItems.length,
-        sellers_count: Object.keys(ordersBySeller).length,
+        sellers_count: successfulOrders.length,
         payment_method: 'cod',
         vehicle_type: deliveryFeeDetails.vehicleType,
         delivery_distance_km: deliveryFeeDetails.distance
@@ -1912,28 +2767,28 @@ class BedrockAIService {
     const R = 6371; // Radius of the earth in km
     const dLat = this.deg2rad(lat2 - lat1);
     const dLon = this.deg2rad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // Distance in km
   }
 
   private deg2rad(deg: number): number {
-    return deg * (Math.PI/180);
+    return deg * (Math.PI / 180);
   }
 
   // List all sellers with optional filtering
   private async listSellers(params: any, userId?: string) {
     const { role, category, location, latitude, longitude, radius_km = 100, limit = 20, offset = 0 } = params;
-    
+
     console.log('listSellers called with params:', params);
-    
+
     try {
       let userLat = latitude;
       let userLng = longitude;
-      
+
       // Fetch user location from profile if not provided but userId is available
       if ((!userLat || !userLng) && userId) {
         const { data: profile } = await supabase
@@ -1941,13 +2796,13 @@ class BedrockAIService {
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profile?.latitude && profile?.longitude) {
           userLat = profile.latitude;
           userLng = profile.longitude;
         }
       }
-      
+
       let queryBuilder = supabase
         .from('profiles')
         .select(`
@@ -1998,7 +2853,7 @@ class BedrockAIService {
 
       console.log('Executing Supabase query...');
       const { data: sellers, error } = await queryBuilder;
-      
+
       if (error) {
         console.error('Supabase query error:', error);
         throw error;
@@ -2010,7 +2865,7 @@ class BedrockAIService {
       let filteredSellers = sellers || [];
       if (role && filteredSellers.length > 0) {
         console.log('Filtering by seller_type:', role);
-        filteredSellers = filteredSellers.filter(seller => 
+        filteredSellers = filteredSellers.filter(seller =>
           seller.seller_details && seller.seller_details.seller_type === role
         );
         console.log('After seller_type filtering:', filteredSellers.length, 'sellers found');
@@ -2020,19 +2875,19 @@ class BedrockAIService {
       if (category && filteredSellers && filteredSellers.length > 0) {
         console.log('Filtering by category:', category);
         const sellerIds = filteredSellers.map(seller => seller.id);
-        
+
         const { data: sellersWithCategory, error: categoryError } = await supabase
           .from('products')
           .select('seller_id')
           .in('seller_id', sellerIds)
           .eq('category', category)
           .gt('stock_available', 0);
-        
+
         if (categoryError) {
           console.error('Category filter error:', categoryError);
           throw categoryError;
         }
-        
+
         const validSellerIds = new Set(sellersWithCategory?.map(p => p.seller_id) || []);
         const categoryFilteredSellers = filteredSellers.filter(seller => validSellerIds.has(seller.id));
         console.log('After category filtering:', categoryFilteredSellers.length, 'sellers found');
@@ -2040,7 +2895,7 @@ class BedrockAIService {
       }
 
       let result = filteredSellers || [];
-      
+
       // If user location is available, calculate distances and sort by proximity
       if (userLat && userLng && result.length > 0) {
         console.log('Calculating distances and sorting by proximity');
@@ -2049,7 +2904,7 @@ class BedrockAIService {
             // Use seller_details location first, then profile location
             const sellerLat = seller.seller_details?.latitude || seller.latitude;
             const sellerLng = seller.seller_details?.longitude || seller.longitude;
-            
+
             if (sellerLat && sellerLng) {
               const distance = this.calculateDistance(
                 userLat, userLng,
@@ -2061,13 +2916,13 @@ class BedrockAIService {
           })
           .filter(seller => seller.distance_km <= radius_km)
           .sort((a, b) => a.distance_km - b.distance_km);
-        
+
         console.log('After distance filtering and sorting:', result.length, 'sellers within', radius_km, 'km');
       }
-      
+
       // Apply pagination after distance sorting
       const paginatedResult = result.slice(offset, offset + limit);
-      
+
       console.log('Final listSellers result:', paginatedResult.length, 'sellers');
       return paginatedResult;
     } catch (error) {
@@ -2079,30 +2934,30 @@ class BedrockAIService {
   // Find nearby wholesalers using Supabase function
   private async findNearbyWholesalers(params: any, userId?: string) {
     let { latitude, longitude, radius_km = 50, limit = 10 } = params;
-    
+
     try {
       // If location not provided, fetch from user profile
       if (!latitude || !longitude) {
         if (!userId) {
           throw new Error('Location required. Please provide latitude and longitude or enable location access in your profile.');
         }
-        
+
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profileError) throw profileError;
-        
+
         if (!profile?.latitude || !profile?.longitude) {
           throw new Error('Location not found in your profile. Please update your profile with location information.');
         }
-        
+
         latitude = profile.latitude;
         longitude = profile.longitude;
       }
-      
+
       const { data, error } = await supabase
         .rpc('find_nearby_wholesalers', {
           radius_km,
@@ -2111,7 +2966,7 @@ class BedrockAIService {
         });
 
       if (error) throw error;
-      
+
       // Limit results if needed
       return data ? data.slice(0, limit) : [];
     } catch (error: any) {
@@ -2123,30 +2978,30 @@ class BedrockAIService {
   // Find nearby manufacturers using Supabase function
   private async findNearbyManufacturers(params: any, userId?: string) {
     let { latitude, longitude, radius_km = 50, limit = 10 } = params;
-    
+
     try {
       // If location not provided, fetch from user profile
       if (!latitude || !longitude) {
         if (!userId) {
           throw new Error('Location required. Please provide latitude and longitude or enable location access in your profile.');
         }
-        
+
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profileError) throw profileError;
-        
+
         if (!profile?.latitude || !profile?.longitude) {
           throw new Error('Location not found in your profile. Please update your profile with location information.');
         }
-        
+
         latitude = profile.latitude;
         longitude = profile.longitude;
       }
-      
+
       const { data, error } = await supabase
         .rpc('find_nearby_manufacturers', {
           radius_km,
@@ -2155,7 +3010,7 @@ class BedrockAIService {
         });
 
       if (error) throw error;
-      
+
       // Limit results if needed
       return data ? data.slice(0, limit) : [];
     } catch (error: any) {
@@ -2167,11 +3022,11 @@ class BedrockAIService {
   // Get products from a specific seller
   private async getSellerProducts(params: any, userId?: string) {
     const { seller_id, category, latitude, longitude, limit = 20 } = params;
-    
+
     try {
       let userLat = latitude;
       let userLng = longitude;
-      
+
       // Fetch user location from profile if not provided but userId is available
       if ((!userLat || !userLng) && userId) {
         const { data: profile } = await supabase
@@ -2179,13 +3034,13 @@ class BedrockAIService {
           .select('latitude, longitude, location_address')
           .eq('id', userId)
           .single();
-        
+
         if (profile?.latitude && profile?.longitude) {
           userLat = profile.latitude;
           userLng = profile.longitude;
         }
       }
-      
+
       let queryBuilder = supabase
         .from('products')
         .select(`
@@ -2207,9 +3062,9 @@ class BedrockAIService {
       }
 
       const { data: products, error } = await queryBuilder;
-      
+
       if (error) throw error;
-      
+
       // Add distance information if user location is available
       if (userLat && userLng && products && products.length > 0) {
         const productsWithDistance = products.map(product => {
@@ -2217,7 +3072,7 @@ class BedrockAIService {
           // Use seller_details location first, then profile location
           const sellerLat = sellerProfile?.seller_details?.latitude || sellerProfile?.latitude;
           const sellerLng = sellerProfile?.seller_details?.longitude || sellerProfile?.longitude;
-          
+
           if (sellerLat && sellerLng) {
             const distance = this.calculateDistance(
               userLat, userLng,
@@ -2227,10 +3082,10 @@ class BedrockAIService {
           }
           return product;
         });
-        
+
         return productsWithDistance;
       }
-      
+
       return products || [];
     } catch (error) {
       console.error('Error getting seller products:', error);
@@ -2238,66 +3093,373 @@ class BedrockAIService {
     }
   }
 
-  // Save conversation to database
+  // Save conversation to database using proper schema
   async saveConversation(conversation: AIConversation): Promise<void> {
     try {
-      const { error } = await supabase
-        .from('ai_conversations')
-        .upsert({
-          id: conversation.id,
-          user_id: conversation.user_id,
-          messages: conversation.messages,
-          context: conversation.context,
-          updated_at: new Date().toISOString()
-        });
+      // Get or create conversation using thread_id
+      const threadId = conversation.id || `conv_${Date.now()}_${conversation.user_id}`;
 
-      if (error) throw error;
+      const { data: convData, error: convError } = await supabase.rpc('get_or_create_ai_conversation', {
+        p_user_id: conversation.user_id,
+        p_thread_id: threadId,
+        p_title: 'AI Chat Conversation'
+      });
+
+      if (convError) throw convError;
+      if (!convData) throw new Error('Failed to get or create conversation');
+
+      const conversationId = convData;
+
+      // Save each message individually
+      if (conversation.messages && conversation.messages.length > 0) {
+        for (const message of conversation.messages) {
+          const contentStr = typeof message.content === 'string'
+            ? message.content
+            : JSON.stringify(message.content);
+
+          const { error: msgError } = await supabase.rpc('save_ai_message', {
+            p_conversation_id: conversationId,
+            p_role: message.role,
+            p_content: contentStr,
+            p_function_calls: message.function_calls ? JSON.stringify(message.function_calls) : '[]',
+            p_metadata: conversation.context ? JSON.stringify(conversation.context) : '{}'
+          });
+
+          if (msgError) {
+            console.error('Error saving message:', msgError);
+          }
+        }
+      }
+
+      console.log('[BedrockAIService] Saved conversation:', threadId, 'with', conversation.messages?.length || 0, 'messages');
     } catch (error) {
       console.error('Error saving conversation:', error);
     }
   }
 
-  // Get conversation history
-  // Get conversation history
-  async getConversation(conversationId: string, userId?: string): Promise<AIConversation | null> {
+  // Save a single message to conversation
+  async saveMessage(conversationId: string, userId: string, message: AIMessage): Promise<void> {
     try {
-      // First try to find by thread_id (for text-based IDs like phone-order-xxx)
-      let query = supabase
-        .from('ai_conversations')
-        .select('*')
-        .eq('thread_id', conversationId);
-      
-      if (userId) {
-        query = query.eq('user_id', userId);
+      // Get or create conversation
+      const { data: convData, error: convError } = await supabase.rpc('get_or_create_ai_conversation', {
+        p_user_id: userId,
+        p_thread_id: conversationId,
+        p_title: 'AI Chat Conversation'
+      });
+
+      if (convError) {
+        console.error('[BedrockAIService] Error getting/creating conversation:', convError);
+        throw convError;
       }
-      
-      let { data, error } = await query.single();
-      
-      // If not found by thread_id and conversationId looks like a UUID, try by id
-      if (error && conversationId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
-        const uuidQuery = supabase
-          .from('ai_conversations')
-          .select('*')
-          .eq('id', conversationId);
-        
-        if (userId) {
-          uuidQuery.eq('user_id', userId);
-        }
-        
-        const uuidResult = await uuidQuery.single();
-        data = uuidResult.data;
-        error = uuidResult.error;
+      if (!convData) {
+        console.error('[BedrockAIService] Failed to get or create conversation');
+        throw new Error('Failed to get or create conversation');
       }
 
-      if (error) {
-        console.log('Conversation not found, will create new one:', conversationId);
+      const dbConversationId = convData;
+
+      // Save the message
+      const contentStr = typeof message.content === 'string'
+        ? message.content
+        : JSON.stringify(message.content);
+
+      // Format function_calls as JSONB (array or object)
+      let functionCallsJson = '[]';
+      if (message.function_calls) {
+        if (Array.isArray(message.function_calls)) {
+          functionCallsJson = JSON.stringify(message.function_calls);
+        } else {
+          functionCallsJson = JSON.stringify([message.function_calls]);
+        }
+      }
+
+      // Format metadata (includes search_results, order_items, etc.)
+      let metadataJson = '{}';
+      if ((message as any).metadata) {
+        metadataJson = JSON.stringify((message as any).metadata);
+      }
+
+      const { error: msgError } = await supabase.rpc('save_ai_message', {
+        p_conversation_id: dbConversationId,
+        p_role: message.role,
+        p_content: contentStr,
+        p_function_calls: functionCallsJson,
+        p_metadata: metadataJson
+      });
+
+      if (msgError) {
+        console.error('[BedrockAIService] Error saving message:', msgError);
+      } else {
+        console.log('[BedrockAIService] Saved message to conversation:', conversationId, 'role:', message.role);
+      }
+    } catch (error) {
+      console.error('[BedrockAIService] Error saving message:', error);
+      // Don't throw - saving is non-critical
+    }
+  }
+
+  // Get conversation history from database
+  async getConversation(conversationId: string, userId?: string): Promise<AIConversation | null> {
+    try {
+      if (!userId) {
+        console.log('[BedrockAIService] No userId provided, cannot load conversation');
         return null;
       }
-      
-      return data;
+
+      // Load conversation messages using the database function
+      const { data: messages, error } = await supabase.rpc('get_ai_conversation_history', {
+        p_user_id: userId,
+        p_thread_id: conversationId,
+        p_limit: 100
+      });
+
+      if (error) {
+        console.log('[BedrockAIService] Conversation not found:', conversationId, error.message);
+        return null;
+      }
+
+      if (!messages || messages.length === 0) {
+        console.log('[BedrockAIService] No messages found for conversation:', conversationId);
+        return null;
+      }
+
+      // Get conversation metadata
+      const { data: convData } = await supabase
+        .from('ai_conversations')
+        .select('id, user_id, thread_id, title, metadata, created_at, updated_at')
+        .eq('thread_id', conversationId)
+        .eq('user_id', userId)
+        .single();
+
+      // Convert database messages to AIMessage format
+      const aiMessages: AIMessage[] = messages.map((msg: any) => {
+        let functionCalls = undefined;
+        if (msg.function_calls) {
+          try {
+            // Parse function_calls if it's a string
+            const parsed = typeof msg.function_calls === 'string'
+              ? JSON.parse(msg.function_calls)
+              : msg.function_calls;
+            // Ensure it's an array
+            functionCalls = Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined;
+          } catch (e) {
+            console.warn('[BedrockAIService] Error parsing function_calls:', e);
+          }
+        }
+
+        // Parse metadata (contains search_results, order_items, etc.)
+        let metadata = undefined;
+        if (msg.metadata) {
+          try {
+            metadata = typeof msg.metadata === 'string'
+              ? JSON.parse(msg.metadata)
+              : msg.metadata;
+          } catch (e) {
+            console.warn('[BedrockAIService] Error parsing metadata:', e);
+          }
+        }
+
+        return {
+          role: msg.role as 'user' | 'assistant' | 'system',
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+          function_calls: functionCalls,
+          metadata: metadata
+        };
+      });
+
+      const conversation: AIConversation = {
+        id: convData?.id || conversationId,
+        user_id: userId,
+        messages: aiMessages,
+        context: convData?.metadata || {},
+        created_at: convData?.created_at ? new Date(convData.created_at) : new Date(),
+        updated_at: convData?.updated_at ? new Date(convData.updated_at) : new Date()
+      };
+
+      console.log('[BedrockAIService] Loaded conversation:', conversationId, 'with', aiMessages.length, 'messages');
+      return conversation;
     } catch (error) {
-      console.error('Error getting conversation:', error);
+      console.error('[BedrockAIService] Error getting conversation:', error);
       return null;
+    }
+  }
+
+  // Get all conversations for a user
+  async getUserConversations(userId: string): Promise<{
+    id: string;
+    thread_id: string;
+    title: string;
+    last_message?: string;
+    message_count: number;
+    created_at: Date;
+    updated_at: Date;
+  }[]> {
+    try {
+      console.log('[BedrockAIService] Getting conversations for user:', userId);
+
+      // Get all conversations for the user
+      const { data: conversations, error } = await supabase
+        .from('ai_conversations')
+        .select(`
+          id,
+          thread_id,
+          title,
+          created_at,
+          updated_at
+        `)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('[BedrockAIService] Error fetching conversations:', error);
+        return [];
+      }
+
+      if (!conversations || conversations.length === 0) {
+        console.log('[BedrockAIService] No conversations found for user');
+        return [];
+      }
+
+      // Get message counts and last message for each conversation
+      const conversationsWithDetails = await Promise.all(
+        conversations.map(async (conv) => {
+          // Get message count and last message
+          const { data: messages, error: msgError } = await supabase
+            .from('ai_messages')
+            .select('content, role')
+            .eq('conversation_id', conv.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          const { count } = await supabase
+            .from('ai_messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('conversation_id', conv.id);
+
+          let lastMessage = '';
+          if (messages && messages.length > 0) {
+            const content = messages[0].content;
+            // Truncate to 50 chars
+            lastMessage = content.length > 50 ? content.substring(0, 50) + '...' : content;
+          }
+
+          return {
+            id: conv.id,
+            thread_id: conv.thread_id,
+            title: conv.title || 'AI Chat',
+            last_message: lastMessage,
+            message_count: count || 0,
+            created_at: new Date(conv.created_at),
+            updated_at: new Date(conv.updated_at)
+          };
+        })
+      );
+
+      console.log('[BedrockAIService] Found', conversationsWithDetails.length, 'conversations for user');
+      return conversationsWithDetails;
+    } catch (error) {
+      console.error('[BedrockAIService] Error getting user conversations:', error);
+      return [];
+    }
+  }
+
+  // =====================================================
+  // AI FEEDBACK SYSTEM
+  // Collects user feedback on AI responses for improvement
+  // =====================================================
+
+  // Save user feedback on an AI response
+  async saveFeedback(params: {
+    messageId: string;
+    conversationId: string;
+    userId: string;
+    rating: 'positive' | 'negative';
+    feedbackText?: string;
+    feedbackCategory?: 'wrong_product' | 'irrelevant' | 'helpful' | 'accurate' | 'slow' | 'other';
+    responseContent: string;
+    userQuery?: string;
+    functionCalls?: any[];
+    searchResultsCount?: number;
+    orderItemsCount?: number;
+    metadata?: Record<string, any>;
+  }): Promise<{ success: boolean; feedbackId?: string; error?: string }> {
+    try {
+      const { data, error } = await supabase.rpc('save_ai_feedback', {
+        p_message_id: params.messageId,
+        p_conversation_id: params.conversationId,
+        p_user_id: params.userId,
+        p_rating: params.rating,
+        p_feedback_text: params.feedbackText || null,
+        p_feedback_category: params.feedbackCategory || null,
+        p_response_content: params.responseContent,
+        p_user_query: params.userQuery || null,
+        p_function_calls: params.functionCalls ? JSON.stringify(params.functionCalls) : '[]',
+        p_search_results_count: params.searchResultsCount || 0,
+        p_order_items_count: params.orderItemsCount || 0,
+        p_metadata: params.metadata ? JSON.stringify(params.metadata) : '{}'
+      });
+
+      if (error) {
+        console.error('[BedrockAIService] Error saving feedback:', error);
+        return { success: false, error: error.message };
+      }
+
+      console.log('[BedrockAIService] Feedback saved:', data, 'rating:', params.rating);
+      return { success: true, feedbackId: data };
+    } catch (error: any) {
+      console.error('[BedrockAIService] Error saving feedback:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Get feedback summary for a user
+  async getFeedbackSummary(userId: string): Promise<{
+    totalFeedback: number;
+    positiveCount: number;
+    negativeCount: number;
+    positiveRate: number;
+  } | null> {
+    try {
+      const { data, error } = await supabase.rpc('get_user_feedback_summary', {
+        p_user_id: userId
+      });
+
+      if (error) {
+        console.error('[BedrockAIService] Error getting feedback summary:', error);
+        return null;
+      }
+
+      if (data && data.length > 0) {
+        return {
+          totalFeedback: data[0].total_feedback || 0,
+          positiveCount: data[0].positive_count || 0,
+          negativeCount: data[0].negative_count || 0,
+          positiveRate: data[0].positive_rate || 0
+        };
+      }
+
+      return { totalFeedback: 0, positiveCount: 0, negativeCount: 0, positiveRate: 0 };
+    } catch (error) {
+      console.error('[BedrockAIService] Error getting feedback summary:', error);
+      return null;
+    }
+  }
+
+  // Check if user has already provided feedback for a message
+  async hasFeedback(messageId: string, userId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('ai_feedback')
+        .select('id')
+        .eq('message_id', messageId)
+        .eq('user_id', userId)
+        .single();
+
+      return !error && !!data;
+    } catch (error) {
+      return false;
     }
   }
 }
