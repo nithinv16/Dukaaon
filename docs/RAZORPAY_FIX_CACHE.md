@@ -48,12 +48,12 @@ Check that these files have the correct values:
 
 **`config/razorpay.ts`** (line 26):
 ```typescript
-keyId: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID', 'rzp_live_RxirgNtNjhxqSg'),
+keyId: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID'),
 ```
 
-**`app.config.js`** (line 248):
+**`app.config.js`** (extra section):
 ```javascript
-EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_live_RxirgNtNjhxqSg",
+EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID,
 ```
 
 ### 5. Check Environment Variables
@@ -61,17 +61,17 @@ EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_liv
 If you have a `.env` file, make sure it has:
 
 ```bash
-EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_live_RxirgNtNjhxqSg
-EXPO_PUBLIC_RAZORPAY_KEY_SECRET=XNC1LWew0Fd4Ly9LoWb4Egrp
+EXPO_PUBLIC_RAZORPAY_KEY_ID=your_razorpay_key_id_here
+# Key secret is set in Supabase Edge Function secrets, never in client code
 ```
 
-**Important**: Environment variables take precedence over fallback values. If `EXPO_PUBLIC_RAZORPAY_KEY_ID` is set to `rzp_live_R` anywhere, it will override the fallback.
+**Important**: Environment variables take precedence over fallback values. If `EXPO_PUBLIC_RAZORPAY_KEY_ID` is not set, the build will fail with a clear error message.
 
 ### 6. Check Console Logs
 
 After restarting, look for these logs:
-- `[RazorpayConfig] Loaded Key ID: rzp_live_RxirgNtNjhxqSg... (length: 21)`
-- `[RazorpayService] Initialized with Key ID: rzp_live_RxirgNtNjhxqSg... (length: 21)`
+- `[RazorpayConfig] Loaded Key ID: rzp_live_XXXXX... (length: 21)`
+- `[RazorpayService] Initialized with Key ID: rzp_live_XXXXX... (length: 21)`
 
 If you see `length: 10`, the cache is still active.
 
@@ -109,7 +109,7 @@ npx expo start --clear
 
 After restarting, the console should show:
 - ✅ Key ID length: 21 (not 10)
-- ✅ Key ID starts with: `rzp_live_RxirgNtNjhxqSg`
+- ✅ Key ID starts with: `rzp_live_` or `rzp_test_`
 - ✅ No validation errors
 
 Then try a payment again!

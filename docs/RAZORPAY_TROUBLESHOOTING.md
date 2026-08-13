@@ -9,7 +9,7 @@ This error typically occurs due to one of the following issues:
 **Symptom**: Razorpay popup shows "Something went wrong" immediately
 
 **Check**:
-- Your Razorpay Key ID should be complete (e.g., `rzp_live_RxirgNtNjhxqSg`)
+- Your Razorpay Key ID should be complete (e.g., `rzp_live_xxxxxxxxxxxx`)
 - It should start with `rzp_live_` (for production) or `rzp_test_` (for testing)
 - Minimum length should be 14+ characters
 

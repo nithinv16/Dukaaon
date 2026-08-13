@@ -1,0 +1,431 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Install dependencies and make verification commands terminate": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408419
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454419382
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786458174962
+      }
+    ],
+    "2. Write bug condition exploration test for client-authored payment state": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408456
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786458189815
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786473688981
+      }
+    ],
+    "3. Write bug condition exploration probe for direct client writes to payment_status": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408486
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786473700814
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786475804984
+      }
+    ],
+    "4. Write bug condition exploration test for the Razorpay secret in build artifacts": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408509
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786475815894
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786478429934
+      }
+    ],
+    "5. Write bug condition exploration test for cleanup job safety": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408536
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786478557208
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786483131541
+      }
+    ],
+    "6. Write preservation property tests for Phase 1 (BEFORE implementing the fix)": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408558
+      },
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786483143687
+      },
+      {
+        "executionId": "fd3a712c-4302-43ca-839a-9dafba87fa6e",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786513435735
+      },
+      {
+        "executionId": "fd3a712c-4302-43ca-839a-9dafba87fa6e",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786514187612
+      }
+    ],
+    "7. HUMAN CHECKPOINT — Rotate the leaked Razorpay key": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408578
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524240333
+      }
+    ],
+    "8. HUMAN CHECKPOINT — Configure Supabase Edge Function secrets": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408602
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524246807
+      }
+    ],
+    "9.1 Strip credential fallbacks from the config layers": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408626
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524222805
+      }
+    ],
+    "9.2 Verify the secret-in-artifact exploration test now passes": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408653
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524228676
+      }
+    ],
+    "9.3 Verify the Razorpay sheet still initializes": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408675
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524234348
+      }
+    ],
+    "10. Confirm the live schema before writing the payment_status trigger migration": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408698
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524253126
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786527557794
+      }
+    ],
+    "11.1 Add the payment_status authority migration": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408725
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786527564774
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786529933780
+      }
+    ],
+    "11.2 Make verify-razorpay-payment the only writer": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408748
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786529939301
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786530116229
+      }
+    ],
+    "11.3 Rewrite the checkout sequence to pending-then-verify": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408774
+      },
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786530121258
+      }
+    ],
+    "11.4 Remove the fake client-side verification": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408798
+      }
+    ],
+    "11.5 Verify the payment-integrity exploration tests now pass": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408820
+      }
+    ],
+    "11.6 Verify the Phase 1 preservation tests still pass": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408843
+      }
+    ],
+    "12.1 Replace cleanup_pending_orders with a grace-window predicate": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408864
+      }
+    ],
+    "12.2 Verify the cleanup exploration test now passes": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408891
+      }
+    ],
+    "13.1 HUMAN CHECKPOINT — Confirm pg_cron is enabled in Supabase": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408918
+      }
+    ],
+    "13.2 Phase 1 checkpoint — confirm Phase 1 is shippable on its own": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408942
+      }
+    ],
+    "14. Write bug condition exploration tests for the Next.js layer": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408964
+      }
+    ],
+    "15. Write preservation baseline for the Expo and EAS builds (BEFORE deleting anything)": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454408992
+      }
+    ],
+    "16.1 Preserve the two things worth keeping, then delete": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409018
+      }
+    ],
+    "16.2 Record which clauses are satisfied by removal": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409042
+      }
+    ],
+    "16.3 Verify the Next.js exploration tests now pass": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409068
+      }
+    ],
+    "16.4 Verify the build preservation baseline still passes": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409092
+      }
+    ],
+    "17. Phase 2 checkpoint": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409118
+      }
+    ],
+    "18. Snapshot the live database grants and policies": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409140
+      }
+    ],
+    "19. Write bug condition exploration test for anon privilege": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409168
+      }
+    ],
+    "20. Write preservation property tests for signup, KYC and uploads (BEFORE the revoke migration)": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409191
+      }
+    ],
+    "21.1 Write the revoke migration": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409212
+      }
+    ],
+    "21.2 Verify the anon-privilege exploration test now passes": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409250
+      }
+    ],
+    "21.3 Verify the signup, KYC and upload preservation tests still pass": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409271
+      }
+    ],
+    "22.1 Source third-party config from app.config.js extra": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409294
+      }
+    ],
+    "22.2 Verify maps functionality is preserved": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409318
+      }
+    ],
+    "23. HUMAN CHECKPOINT — Restrict the Google Maps API key in Google Cloud": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409341
+      }
+    ],
+    "24. HUMAN CHECKPOINT — Rotate the Supabase service-role key": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409364
+      }
+    ],
+    "25. Clean up committed credentials and build artifacts": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409390
+      }
+    ],
+    "26. Complete the verification gate": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409418
+      }
+    ],
+    "27. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "45d12541-43bb-457c-b67c-8e2ab3557302",
+        "chatSessionId": "sess_74b64b54-f49f-4206-986a-d95119976614",
+        "timestamp": 1786454409447
+      }
+    ],
+    "9. Remove the Razorpay secret from the client and the docs": [
+      {
+        "executionId": "c7dd2de6-a770-44d0-a5ef-9c3fae1cb3af",
+        "chatSessionId": "sess_0c421729-5014-46b5-b2f0-46ea962d91b0",
+        "timestamp": 1786524234393
+      }
+    ]
+  }
+}

@@ -45,8 +45,9 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successModalVisible, setSuccessModalVisible] = useState(false);
-  const [orderId, setOrderId] = useState<string | null>(null); // Only set for COD orders
-  const [temporaryOrderId, setTemporaryOrderId] = useState<string | null>(null); // Temporary ID for Razorpay (before order creation)
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null); // Real order ID for online payments (created before Razorpay opens)
+  const [pendingMasterOrderId, setPendingMasterOrderId] = useState<string | null>(null); // Real master order ID for multi-seller online payments
   const [showPaymentProcessor, setShowPaymentProcessor] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [hasAutoPaid, setHasAutoPaid] = useState(false); // Track if auto-pay has been triggered
@@ -83,13 +84,12 @@ export default function Checkout() {
   // Auto-trigger payment when autoPay flag is set
   useEffect(() => {
     const autoTriggerPayment = async () => {
-      if (autoPay && defaultMethod && defaultMethod.type === 'razorpay' && !temporaryOrderId && !hasAutoPaid && !loading && user && items.length > 0) {
+      if (autoPay && defaultMethod && defaultMethod.type === 'razorpay' && !pendingOrderId && !pendingMasterOrderId && !hasAutoPaid && !loading && user && items.length > 0) {
         console.log('[Checkout] Auto-triggering Razorpay payment with UPI pre-selected');
         setHasAutoPaid(true);
-        // Automatically call handlePayment to open Razorpay (no order creation yet)
-        handlePayment().catch((error) => {
-          console.error('[Checkout] Auto-pay error:', error);
-          setError(error.message || 'Failed to auto-start payment');
+        handlePayment().catch((err) => {
+          console.error('[Checkout] Auto-pay error:', err);
+          setError(err.message || 'Failed to auto-start payment');
           setHasAutoPaid(false); // Reset to allow retry
         });
       }
@@ -97,7 +97,7 @@ export default function Checkout() {
 
     autoTriggerPayment();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPay, defaultMethod, temporaryOrderId, hasAutoPaid, loading, user]);
+  }, [autoPay, defaultMethod, pendingOrderId, pendingMasterOrderId, hasAutoPaid, loading, user]);
 
   const handlePayment = async () => {
     if (!defaultMethod || !user) return;
@@ -165,9 +165,126 @@ export default function Checkout() {
         return;
       }
 
-      // For online payments: Generate temporary order ID for Razorpay (order created after payment succeeds)
-      const temporaryOrderNumber = `TMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      setTemporaryOrderId(temporaryOrderNumber);
+      // -----------------------------------------------------------------------
+      // Online payments: Create PENDING order FIRST, then open Razorpay sheet.
+      // The client NEVER writes payment_status = 'paid'. That is done server-side
+      // by verify-razorpay-payment → mark_order_paid after signature verification.
+      // -----------------------------------------------------------------------
+
+      const uniqueSellerIds = [...new Set(items.map(item => item.seller_id).filter(Boolean))];
+
+      if (uniqueSellerIds.length === 0) {
+        throw new Error('No seller found in cart items');
+      }
+
+      if (uniqueSellerIds.length > 1) {
+        // Multi-seller: create pending master order via MasterOrderService
+        const { splitCartBySeller } = useCartStore.getState();
+        const itemsBySeller = splitCartBySeller();
+
+        const deliveryAddress = {
+          street: user.business_details?.address || '',
+          city: user.business_details?.city || '',
+          state: user.business_details?.state || '',
+          postal_code: user.business_details?.postal_code || '',
+          address: user.business_details?.address || '',
+          pincode: user.business_details?.postal_code || '',
+          country: 'India',
+          latitude: user.latitude ? Number(user.latitude) : 0,
+          longitude: user.longitude ? Number(user.longitude) : 0
+        };
+
+        let totalAmount = 0;
+        const ordersBySeller: Record<string, any> = {};
+        const sellerIds = Object.keys(itemsBySeller);
+        const firstSellerId = sellerIds[0];
+
+        for (const [seller_id, sellerItems] of Object.entries(itemsBySeller)) {
+          const sellerSubtotal = sellerItems.reduce((sum, item) =>
+            sum + (Number(item.price) * item.quantity), 0);
+          totalAmount += sellerSubtotal;
+
+          const deliveryFeeForThisSeller = seller_id === firstSellerId ? deliveryFee : 0;
+
+          ordersBySeller[seller_id] = {
+            user_id: user.id,
+            seller_id: seller_id,
+            items: sellerItems.map(item => ({
+              product_id: item.product_id,
+              quantity: item.quantity,
+              price: item.price,
+              name: item.name,
+              unit: item.unit
+            })),
+            total_amount: sellerSubtotal,
+            delivery_fee: deliveryFeeForThisSeller,
+            status: 'placed',
+            payment_status: 'pending', // NEVER 'paid' — server decides
+            payment_method: mapPaymentMethod(defaultMethod?.type || 'razorpay'),
+            delivery_address: user.business_details?.shopName
+              ? `${user.business_details.shopName}, ${user.business_details?.address || ''}`
+              : user.business_details?.address || '',
+            order_number: `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            payment_initiated_at: new Date().toISOString(),
+          };
+        }
+
+        const { MasterOrderService } = await import('../../../services/masterOrderService');
+
+        const result = await MasterOrderService.placeCompleteOrder(
+          user.id,
+          ordersBySeller,
+          deliveryAddress,
+          totalAmount,
+          deliveryFee,
+          mapPaymentMethod(defaultMethod?.type || 'razorpay'),
+          undefined
+        );
+
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to create order');
+        }
+
+        // Set payment_initiated_at on the master order row
+        await supabase
+          .from('master_orders')
+          .update({ payment_initiated_at: new Date().toISOString() })
+          .eq('id', result.masterOrderId);
+
+        // Store the real master order ID — we'll use it for verification after Razorpay
+        setPendingMasterOrderId(result.masterOrderId!);
+        setPendingOrderId(null);
+      } else {
+        // Single-seller: create pending order directly
+        const orderNumber = `ORD-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substr(2, 9)}`;
+        const primarySellerId = uniqueSellerIds[0];
+
+        const { data: order, error: orderError } = await supabase
+          .from('orders')
+          .insert({
+            order_number: orderNumber,
+            user_id: user.id,
+            seller_id: primarySellerId,
+            items: items,
+            total_amount: subtotal,
+            delivery_fee: deliveryFee,
+            status: 'placed',
+            payment_status: 'pending', // NEVER 'paid' — server decides
+            payment_method: mapPaymentMethod(defaultMethod?.type || 'razorpay'),
+            payment_initiated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (orderError) throw orderError;
+
+        // Store the real order ID — we'll use it for verification after Razorpay
+        // Seller notifications are sent AFTER payment verification succeeds (in handlePaymentSuccess)
+        setPendingOrderId(order.id);
+        setPendingMasterOrderId(null);
+      }
+
+      // Open the Razorpay payment sheet
       setShowPaymentProcessor(true);
     } catch (error: any) {
       console.error('Order processing error:', error);
@@ -177,6 +294,14 @@ export default function Checkout() {
     }
   };
 
+  /**
+   * Called after Razorpay sheet returns a success callback.
+   * The client does NOT write paid state. Instead it:
+   *   1. Invokes verify-razorpay-payment (which does HMAC check + mark_order_paid)
+   *   2. Reads back the order to confirm payment_status === 'paid'
+   *   3. On success: clearCart + show success modal
+   *   4. On failure: show error, preserve cart for retry
+   */
   const handlePaymentSuccess = async (paymentData: {
     razorpay_payment_id: string;
     razorpay_order_id: string;
@@ -190,221 +315,143 @@ export default function Checkout() {
         throw new Error('User not found');
       }
 
-      // Get unique seller IDs from cart items
-      const uniqueSellerIds = [...new Set(items.map(item => item.seller_id).filter(Boolean))];
+      // -----------------------------------------------------------------------
+      // Step 3: Invoke verify-razorpay-payment with the Razorpay triple
+      // The edge function verifies HMAC and calls mark_order_paid if valid.
+      // -----------------------------------------------------------------------
+      const verifyBody: Record<string, any> = {
+        razorpay_payment_id: paymentData.razorpay_payment_id,
+        razorpay_order_id: paymentData.razorpay_order_id,
+        razorpay_signature: paymentData.razorpay_signature,
+        amount: total,
+      };
 
-      if (uniqueSellerIds.length === 0) {
-        throw new Error('No seller found in cart items');
+      if (pendingMasterOrderId) {
+        verifyBody.master_order_id = pendingMasterOrderId;
+      } else if (pendingOrderId) {
+        verifyBody.order_id = pendingOrderId;
+      } else {
+        // Shouldn't happen — but handle gracefully
+        throw new Error('No pending order found for verification');
       }
 
-      // Check if we have multiple sellers - if so, use MasterOrderService
-      if (uniqueSellerIds.length > 1) {
-        // Multi-seller order - use MasterOrderService (same as cart screen for COD)
-        const { splitCartBySeller } = useCartStore.getState();
-        const itemsBySeller = splitCartBySeller();
+      let verifyData: any = null;
+      let verifyError: any = null;
 
-        // Prepare delivery address
-        const deliveryAddress = {
-          street: user.business_details?.address || '',
-          city: user.business_details?.city || '',
-          state: user.business_details?.state || '',
-          postal_code: user.business_details?.postal_code || '',
-          address: user.business_details?.address || '',
-          pincode: user.business_details?.postal_code || '',
-          country: 'India',
-          latitude: user.latitude ? Number(user.latitude) : 0,
-          longitude: user.longitude ? Number(user.longitude) : 0
-        };
-
-        // Calculate totals and prepare orders by seller
-        let totalAmount = 0;
-        const ordersBySeller: Record<string, any> = {};
-        const sellerIds = Object.keys(itemsBySeller);
-        const firstSellerId = sellerIds[0]; // Assign delivery fee to first seller
-
-        // Prepare orders by seller
-        for (const [seller_id, sellerItems] of Object.entries(itemsBySeller)) {
-          const subtotal = sellerItems.reduce((total, item) =>
-            total + (Number(item.price) * item.quantity), 0);
-          totalAmount += subtotal;
-
-          // Assign delivery fee to the first seller only (delivery fee is already calculated in cart)
-          const deliveryFeeForThisSeller = seller_id === firstSellerId ? deliveryFee : 0;
-
-          ordersBySeller[seller_id] = {
-            user_id: user.id,
-            seller_id: seller_id,
-            items: sellerItems.map(item => ({
-              product_id: item.product_id,
-              quantity: item.quantity,
-              price: item.price,
-              name: item.name,
-              unit: item.unit
-            })),
-            total_amount: subtotal,
-            delivery_fee: deliveryFeeForThisSeller,
-            status: 'placed',
-            payment_status: 'paid', // Payment already succeeded
-            payment_method: mapPaymentMethod(defaultMethod?.type || 'razorpay'),
-            delivery_address: user.business_details?.shopName
-              ? `${user.business_details.shopName}, ${user.business_details?.address || ''}`
-              : user.business_details?.address || '',
-            order_number: `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          };
-        }
-
-        // Use MasterOrderService to place the complete order
-        const { MasterOrderService } = await import('../../../services/masterOrderService');
-
-        const result = await MasterOrderService.placeCompleteOrder(
-          user.id,
-          ordersBySeller,
-          deliveryAddress,
-          totalAmount,
-          deliveryFee,
-          mapPaymentMethod(defaultMethod?.type || 'razorpay'),
-          undefined // delivery instructions
-        );
-
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to place order');
-        }
-
-        // For multi-seller orders, payment is tracked in master_order.payment_status
-        // payment_transactions table expects order_id from orders table, not master_orders
-        // We could create payment_transactions for individual orders, but it's not necessary
-        // since the master_order.payment_status = 'paid' already tracks the payment
-        // Individual orders are linked to the master_order, so payment status can be derived
-
-        // Verify payment signature server-side
-        try {
-          const { data: verifyData, error: verifyError } = await supabase.functions.invoke('verify-razorpay-payment', {
-            body: {
-              razorpay_payment_id: paymentData.razorpay_payment_id,
-              razorpay_order_id: paymentData.razorpay_order_id,
-              razorpay_signature: paymentData.razorpay_signature,
-              order_id: result.masterOrderId,
-            },
-          });
-
-          if (verifyError || !verifyData?.verified) {
-            console.warn('[Checkout] Payment verification warning:', verifyError || verifyData);
-          }
-        } catch (verifyErr) {
-          console.error('[Checkout] Verification function error:', verifyErr);
-        }
-
-        // Clear cart after successful order creation
-        await clearCart();
-        
-        // Set order ID and show success
-        setOrderId(result.masterOrderId!);
-        setTemporaryOrderId(null);
-        setSuccessModalVisible(true);
+      try {
+        const response = await supabase.functions.invoke('verify-razorpay-payment', {
+          body: verifyBody,
+        });
+        verifyData = response.data;
+        verifyError = response.error;
+      } catch (invokeErr: any) {
+        // Network error / connectivity loss after callback
+        console.error('[Checkout] Verification invoke error:', invokeErr);
+        setError('Verification pending — do not pay again. Please retry in a moment.');
         setShowPaymentProcessor(false);
-      } else {
-        // Single seller order - use existing logic
-        const orderNumber = `ORD-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substr(2, 9)}`;
-        const primarySellerId = uniqueSellerIds[0];
-        const orderSubtotal = subtotal;
+        setLoading(false);
+        return;
+      }
 
-        const { data: order, error: orderError } = await supabase
-          .from('orders')
-          .insert({
-            order_number: orderNumber,
-            user_id: user.id,
-            seller_id: primarySellerId,
-            items: items,
-            total_amount: orderSubtotal,
-            delivery_fee: deliveryFee,
-            status: 'placed',
-            payment_status: 'paid',
-            payment_method: mapPaymentMethod(defaultMethod?.type || 'razorpay'),
-          })
-          .select()
+      // -----------------------------------------------------------------------
+      // Step 5: Read back the verified state
+      // -----------------------------------------------------------------------
+      if (verifyError || !verifyData?.verified) {
+        // Verification failed: HMAC mismatch, server error, or mark_order_paid failed.
+        // Order stays pending. Cart is preserved for retry.
+        const failureMessage = verifyData?.code === 'MARK_ORDER_PAID_FAILED'
+          ? 'Payment verified but order update failed — please retry.'
+          : 'Payment could not be verified. Your order is pending — do not pay again.';
+        console.error('[Checkout] Verification failed:', verifyError || verifyData);
+        setError(failureMessage);
+        setShowPaymentProcessor(false);
+        setLoading(false);
+        return;
+      }
+
+      // Verification succeeded — re-SELECT the order to confirm payment_status === 'paid'
+      let confirmedPaid = false;
+
+      if (pendingMasterOrderId) {
+        const { data: masterOrder } = await supabase
+          .from('master_orders')
+          .select('id, payment_status')
+          .eq('id', pendingMasterOrderId)
           .single();
 
-        if (orderError) throw orderError;
+        confirmedPaid = masterOrder?.payment_status === 'paid';
+      } else if (pendingOrderId) {
+        const { data: order } = await supabase
+          .from('orders')
+          .select('id, payment_status')
+          .eq('id', pendingOrderId)
+          .single();
 
-        // Create payment transaction record
-        const { error: transactionError } = await supabase
-          .from('payment_transactions')
-          .insert({
-            order_id: order.id,
-            amount: total,
-            status: 'completed',
-            transaction_id: paymentData.razorpay_payment_id,
-            payment_method: mapPaymentMethod(defaultMethod?.type || 'razorpay'),
-          });
-
-        if (transactionError) {
-          console.error('[Checkout] Error creating payment transaction:', transactionError);
-        }
-
-        // Notify seller
-        const { error: notificationError } = await supabase
-          .from('seller_notifications')
-          .insert({
-            seller_id: primarySellerId,
-            type: 'new_order',
-            order_id: order.id,
-            message: `New order received: ${orderNumber}`,
-            status: 'unread'
-          });
-
-        if (notificationError) {
-          console.warn('Error creating seller notification:', notificationError);
-        }
-
-        // Verify payment signature server-side
-        try {
-          const { data: verifyData, error: verifyError } = await supabase.functions.invoke('verify-razorpay-payment', {
-            body: {
-              razorpay_payment_id: paymentData.razorpay_payment_id,
-              razorpay_order_id: paymentData.razorpay_order_id,
-              razorpay_signature: paymentData.razorpay_signature,
-              order_id: order.id,
-            },
-          });
-
-          if (verifyError || !verifyData?.verified) {
-            console.warn('[Checkout] Payment verification warning:', verifyError || verifyData);
-          }
-        } catch (verifyErr) {
-          console.error('[Checkout] Verification function error:', verifyErr);
-        }
-
-        // Clear cart after successful order creation
-        await clearCart();
-        
-        // Set order ID and show success
-        setOrderId(order.id);
-        setTemporaryOrderId(null);
-        setSuccessModalVisible(true);
-        setShowPaymentProcessor(false);
+        confirmedPaid = order?.payment_status === 'paid';
       }
+
+      if (!confirmedPaid) {
+        // Server said verified but the row isn't paid yet — edge case / race.
+        // Treat as pending and allow retry.
+        setError('Verification pending — do not pay again. Please retry in a moment.');
+        setShowPaymentProcessor(false);
+        setLoading(false);
+        return;
+      }
+
+      // -----------------------------------------------------------------------
+      // Success: order confirmed paid by server. Clear cart and show success.
+      // -----------------------------------------------------------------------
+
+      // Send seller notifications now that payment is verified
+      try {
+        const uniqueSellerIds = [...new Set(items.map(item => item.seller_id).filter(Boolean))];
+        if (uniqueSellerIds.length > 0 && (pendingOrderId || pendingMasterOrderId)) {
+          const { error: notificationError } = await supabase
+            .from('seller_notifications')
+            .insert(uniqueSellerIds.map(sellerId => ({
+              seller_id: sellerId,
+              type: 'new_order',
+              order_id: pendingOrderId || pendingMasterOrderId,
+              message: `New order received — payment verified`,
+              status: 'unread'
+            })));
+
+          if (notificationError) {
+            console.warn('[Checkout] Error creating seller notifications:', notificationError);
+          }
+        }
+      } catch (notifErr) {
+        console.warn('[Checkout] Seller notification error (non-fatal):', notifErr);
+      }
+
+      await clearCart();
+      setOrderId(pendingMasterOrderId || pendingOrderId);
+      setPendingOrderId(null);
+      setPendingMasterOrderId(null);
+      setSuccessModalVisible(true);
+      setShowPaymentProcessor(false);
     } catch (error: any) {
-      console.error('[Checkout] Payment success handling error:', error);
-      setError(error.message || 'Failed to create order after payment.');
+      console.error('[Checkout] Payment verification handling error:', error);
+      setError(error.message || 'Verification pending — do not pay again. Please retry in a moment.');
       setShowPaymentProcessor(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePaymentFailure = async (error: string) => {
-    if (error.startsWith('CANCELLED: ')) {
-      const userFriendlyError = error.replace('CANCELLED: ', '');
+  const handlePaymentFailure = async (failureMsg: string) => {
+    if (failureMsg.startsWith('CANCELLED: ')) {
+      const userFriendlyError = failureMsg.replace('CANCELLED: ', '');
       setError(userFriendlyError);
       setShowPaymentProcessor(false);
       return;
     }
 
-    // No order was created (since we create orders only after payment succeeds)
-    // So just clear temporary ID, show error, and close payment processor
-    setTemporaryOrderId(null);
-      setError(error);
-      setShowPaymentProcessor(false);
+    // Order already exists as pending. Do NOT delete it — verification is idempotent
+    // and cleanup will reclaim it after the grace window if truly abandoned.
+    setError(failureMsg);
+    setShowPaymentProcessor(false);
     setLoading(false);
   };
 
@@ -572,7 +619,7 @@ export default function Checkout() {
             <Divider style={{ marginVertical: 16 }} />
             <PaymentProcessor
               amount={total}
-              orderId={temporaryOrderId || `TMP-${Date.now()}`} // Use temporary ID for Razorpay tracking
+              orderId={pendingMasterOrderId || pendingOrderId || `TMP-${Date.now()}`}
               paymentMethod={defaultMethod!.type}
               paymentDetails={defaultMethod!.details}
               onSuccess={handlePaymentSuccess}
@@ -618,11 +665,12 @@ export default function Checkout() {
       <ConfirmationDialog
         visible={showCancelDialog}
         title="Cancel Payment"
-        message="Are you sure you want to cancel this payment? No order will be created."
+        message="Are you sure you want to cancel this payment? Your order will remain pending and can be retried."
         confirmText="Yes, Cancel"
         onConfirm={() => {
           setShowCancelDialog(false);
-          router.back();
+          setShowPaymentProcessor(false);
+          setError('Payment cancelled. Your order is pending — you can retry when ready.');
         }}
         onCancel={() => setShowCancelDialog(false)}
       />

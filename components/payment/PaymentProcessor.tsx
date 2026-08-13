@@ -97,27 +97,15 @@ export function PaymentProcessor({
         forceUpi: forceUpi || paymentDetails.preferred_upi_app !== undefined, // Force UPI if explicitly requested or preferred app is set
       });
 
-      // Verify payment (client-side check - server verification should be done in onSuccess)
-      const isVerified = await razorpayService.verifyPayment(
-        response.razorpay_payment_id,
-        response.razorpay_order_id,
-        response.razorpay_signature
-      );
-
-      if (isVerified) {
-        setStatus('success');
-        // Small delay to show success state before calling onSuccess
-        // Pass payment details to onSuccess for database update
-        setTimeout(() => {
-          onSuccess({
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_signature: response.razorpay_signature,
-          });
-        }, 1500);
-      } else {
-        throw new Error('Payment verification failed');
-      }
+      // Payment completed — hand the callback triple to onSuccess for server-side verification
+      setStatus('success');
+      setTimeout(() => {
+        onSuccess({
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_order_id: response.razorpay_order_id,
+          razorpay_signature: response.razorpay_signature,
+        });
+      }, 1500);
     } catch (error: any) {
       console.error('Payment processing error:', error);
       
@@ -174,9 +162,9 @@ export function PaymentProcessor({
 
       {status === 'success' && (
         <>
-          <Text style={styles.successText}>Payment Successful!</Text>
+          <Text style={styles.successText}>Payment Completed</Text>
           <Text style={styles.successSubtext}>
-            Your payment has been processed successfully
+            Verifying your payment...
           </Text>
           <ActivityIndicator size="small" style={{ marginTop: 16 }} />
         </>

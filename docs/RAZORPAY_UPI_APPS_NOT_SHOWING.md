@@ -109,7 +109,7 @@ This ensures that when user selects UPI, UPI apps will be shown (if UPI Intent i
 
 1. **Contact Razorpay Support**
    - Ask them to enable UPI Intent for your account
-   - Provide your Razorpay Key ID: `rzp_live_RxirgNtNjhxqSg`
+   - Provide your Razorpay Key ID: `<your_razorpay_key_id>`
    - Mention you're using React Native SDK v2.3.1
 
 2. **Verify Account Status**

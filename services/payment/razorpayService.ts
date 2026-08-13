@@ -436,56 +436,6 @@ class RazorpayServiceClass {
   }
 
   /**
-   * Verify payment signature
-   * Note: This should ideally be done on your backend for security
-   * This is a client-side verification that can be bypassed
-   */
-  async verifyPayment(
-    paymentId: string,
-    orderId: string,
-    signature: string
-  ): Promise<boolean> {
-    try {
-      // IMPORTANT: Client-side verification is not secure
-      // You should verify the payment signature on your backend
-      // This is just a placeholder check
-      
-      if (!paymentId || !orderId || !signature) {
-        console.warn('[RazorpayService] Missing payment verification data');
-        return false;
-      }
-
-      // In production, make an API call to your backend to verify the signature
-      // For now, we'll do a basic validation
-      const isValid = paymentId.startsWith('pay_') && 
-                     orderId.startsWith('order_') && 
-                     signature.length > 0;
-
-      if (!isValid) {
-        console.warn('[RazorpayService] Payment verification failed - invalid format');
-        return false;
-      }
-
-      // TODO: Implement proper server-side verification
-      // You should call your backend API to verify the signature using the key secret
-      // Example:
-      // const response = await fetch('https://your-api.com/verify-payment', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ paymentId, orderId, signature })
-      // });
-      // const { verified } = await response.json();
-      // return verified;
-
-      console.log('[RazorpayService] Payment verification passed (client-side check)');
-      return true;
-    } catch (error) {
-      console.error('[RazorpayService] Payment verification error:', error);
-      return false;
-    }
-  }
-
-  /**
    * Map payment method type to Razorpay method
    */
   private getPaymentMethod(paymentMethod: PaymentMethodType): any {

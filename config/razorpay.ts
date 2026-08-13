@@ -22,8 +22,7 @@ const getConfigValue = (key: string, defaultValue: string = ''): string => {
 };
 
 // Razorpay configuration
-const keyId = getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID', 'rzp_live_RxirgNtNjhxqSg');
-const keySecret = getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_SECRET', 'XNC1LWew0Fd4Ly9LoWb4Egrp');
+const keyId = getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID');
 
 // Debug: Log what value was loaded (for troubleshooting)
 if (typeof window !== 'undefined' || typeof global !== 'undefined') {
@@ -35,7 +34,6 @@ if (typeof window !== 'undefined' || typeof global !== 'undefined') {
 
 export const razorpayConfig = {
   keyId,
-  keySecret,
   // For server-side operations, you'll need to use the key secret
   // This should be kept secure and only used on the backend
   merchantName: 'DukaaOn',
@@ -68,9 +66,8 @@ export const ENV_TEMPLATE = `
 # Note: EXPO_PUBLIC_ prefix is required for client-side access in React Native/Expo
 
 # Razorpay Live Keys (from your Razorpay dashboard)
-EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_live_RxirgNtNjhxqSg
-EXPO_PUBLIC_RAZORPAY_KEY_SECRET=XNC1LWew0Fd4Ly9LoWb4Egrp
-
+EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
+# Key secret is set in Supabase secrets, never here
 
 # Note: Key secret is typically only used on the backend for payment verification
 # The React Native SDK only requires the key ID for payment initialization

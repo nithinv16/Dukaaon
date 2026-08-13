@@ -17,13 +17,13 @@ This guide explains how Razorpay payment integration is set up in the DukaaOn ap
 ### Credentials
 
 The Razorpay credentials are configured as:
-- **Key ID**: `rzp_live_R`
-- **Key Secret**: `XNC1LWew` (used for backend verification only)
+- **Key ID**: Set via `EXPO_PUBLIC_RAZORPAY_KEY_ID` environment variable (client-side, for payment initialization)
+- **Key Secret**: Set as Supabase Edge Function secret `RAZORPAY_KEY_SECRET` (server-side only, for HMAC verification)
 
 These are stored in:
-- Environment variables: `EXPO_PUBLIC_RAZORPAY_KEY_ID` and `EXPO_PUBLIC_RAZORPAY_KEY_SECRET`
-- `app.config.js` extra section (with fallback values)
-- `config/razorpay.ts` (with fallback values)
+- Environment variable: `EXPO_PUBLIC_RAZORPAY_KEY_ID` (required — build fails without it)
+- Supabase Edge Function secrets: `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`
+- `config/razorpay.ts` reads the key ID from environment/Expo config
 
 ## How It Works
 
@@ -181,8 +181,8 @@ Razorpay provides test credentials for development:
 
 Update your `.env` file:
 ```env
-EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxx
-EXPO_PUBLIC_RAZORPAY_KEY_SECRET=xxx
+EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
+# Key secret is set in Supabase Edge Function secrets, never in .env
 ```
 
 ### Test Cards

@@ -24,8 +24,8 @@ const getConfigValue = (key: string, defaultValue: string = ''): string => {
 
 // Supabase configuration
 export const supabaseConfig = {
-  url: getConfigValue('SUPABASE_URL', 'https://xcpznnkpjgyrpbvpnvit.supabase.co'),
-  anonKey: getConfigValue('SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjcHpubmtwamd5cnBidnBudml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg2MTc3MjgsImV4cCI6MjA1NDE5MzcyOH0.1Gg97eXqRmNcZpmKYaBNDozfc_mXrgFv_uHj-br-u_k')
+  url: getConfigValue('SUPABASE_URL'),
+  anonKey: getConfigValue('SUPABASE_ANON_KEY')
 };
 
 // Firebase configuration
@@ -46,8 +46,7 @@ export const googleMapsConfig = {
 
 // Razorpay configuration
 export const razorpayConfig = {
-  keyId: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID', 'rzp_live_RxirgNtNjhxqSg'),
-  keySecret: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_SECRET', 'XNC1LWew0Fd4Ly9LoWb4Egrp'),
+  keyId: getConfigValue('EXPO_PUBLIC_RAZORPAY_KEY_ID'),
 };
 
 // Export all configurations

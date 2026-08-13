@@ -49,7 +49,7 @@ Some Razorpay accounts have UPI Intent flow disabled by default. You may need to
 **UPI Intent flow may not work in Test Mode!**
 
 - Check if you're using test keys (`rzp_test_...`) or live keys (`rzp_live_...`)
-- Your config shows `rzp_live_RxirgNtNjhxqSg` - this is live mode ✅
+- Your config shows `rzp_live_xxxxxxxxxxxx` - this is live mode ✅
 - But verify in Razorpay Dashboard that UPI Intent is enabled for live mode
 
 ### 4. Device Requirements
@@ -133,7 +133,7 @@ If apps are not detected, the Android queries aren't working.
 ## Contact Razorpay Support
 
 If nothing works, contact Razorpay support with:
-- Your Razorpay Key ID: `rzp_live_RxirgNtNjhxqSg`
+- Your Razorpay Key ID: `<your_razorpay_key_id>`
 - Issue: "UPI Intent flow not showing direct app options"
 - Ask: "Is UPI Intent enabled for my account?"
 

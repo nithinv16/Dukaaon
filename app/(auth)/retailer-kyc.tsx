@@ -196,7 +196,7 @@ export default function RetailerKYC() {
       if (form.shopImage?.base64) {
         try {
           console.log('Uploading shop image');
-          const fileName = `shop_images/${user.id}_${Date.now()}.jpg`;
+          const fileName = `${user.id}/shop_${Date.now()}.jpg`;
 
           const { error: uploadError } = await supabase.storage
             .from('shop-images')
@@ -731,7 +731,7 @@ export default function RetailerKYC() {
         console.log('=== STEP 4: UPLOADING TO STORAGE ===');
         // Upload immediately to get URL
         const base64FileData = manipulatedImage.base64;
-        const fileName = `shop_images/${user?.id || 'temp'}_${Date.now()}.jpg`;
+        const fileName = `${user?.id || 'temp'}/shop_${Date.now()}.jpg`;
         console.log('Upload file name:', fileName);
 
         const { error: uploadError } = await supabase.storage

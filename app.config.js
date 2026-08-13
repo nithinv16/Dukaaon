@@ -10,6 +10,14 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = 'development';
 }
 
+// Guard: fail the build loudly when required payment config is absent
+if (!process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID) {
+  throw new Error(
+    'EXPO_PUBLIC_RAZORPAY_KEY_ID is not set. ' +
+    'Add it to your .env file or EAS secrets before building.'
+  );
+}
+
 // Expo configuration
 const expoConfig = {
   name: "dukaaon",
@@ -254,8 +262,13 @@ const expoConfig = {
     awsAccessKeyId: process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID,
     awsSecretAccessKey: process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY,
     awsRegion: process.env.EXPO_PUBLIC_AWS_REGION || process.env.AWS_REGION || 'us-east-1',
+    // Supabase Configuration
+    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+    supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+    // Google Maps Configuration
+    googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
     // Firebase config moved to extra
-    firebaseApiKey: process.env.FIREBASE_API_KEY || "AIzaSyA",
+    firebaseApiKey: process.env.FIREBASE_API_KEY,
     firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || "dukaaon.firebaseapp.com",
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || "dukaaon",
     firebaseStorageBucket: process.env.FIREBASE_STORAGE_BUCKET || "dukaaon.firebasestorage.app",
@@ -278,8 +291,7 @@ const expoConfig = {
       }
     },
     // Razorpay Configuration
-    EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_live_RxirgNtNjhxqSg",
-    EXPO_PUBLIC_RAZORPAY_KEY_SECRET: process.env.EXPO_PUBLIC_RAZORPAY_KEY_SECRET || "XNC1LWew0Fd4Ly9LoWb4Egrp",
+    EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID,
     // Authkey.io WhatsApp API Configuration
     authkeyApiKey: process.env.EXPO_PUBLIC_AUTHKEY_API_KEY || "904251f34754cedc",
     authkeyTemplateOrderReceived: "24468"

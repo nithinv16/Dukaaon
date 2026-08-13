@@ -221,14 +221,6 @@ export const AI_CONSTANTS = {
   DEBOUNCE_DELAY: 300,
   THROTTLE_DELAY: 1000,
   
-  // API endpoints
-  ENDPOINTS: {
-    CHAT: '/api/ai/chat',
-    VOICE_SEARCH: '/api/ai/voice/search',
-    VOICE_ORDER: '/api/ai/voice/order',
-    RECOMMENDATIONS: '/api/ai/recommendations'
-  },
-  
   // Error messages
   ERRORS: {
     NETWORK: 'Network error. Please check your connection and try again.',

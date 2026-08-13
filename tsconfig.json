@@ -8,18 +8,37 @@
     "jsx": "preserve",
     "incremental": true,
     "module": "esnext",
-    "isolatedModules": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ]
+    "isolatedModules": true
   },
   "extends": "expo/tsconfig.base",
   "include": [
-    "next-env.d.ts",
-    ".next/types/**/*.ts",
-    "**/*.ts",
-    "**/*.tsx"
+    "app/**/*",
+    "components/**/*",
+    "services/**/*",
+    "hooks/**/*",
+    "store/**/*",
+    "contexts/**/*",
+    "providers/**/*",
+    "utils/**/*",
+    "lib/**/*",
+    "config/**/*",
+    "constants/**/*",
+    "types/**/*",
+    "theme/**/*",
+    "navigator/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "supabase/functions",
+    "tests",
+    "scripts",
+    "DukaaOnWebsite",
+    "Website",
+    "old-website-backup",
+    "src",
+    "screens",
+    "android",
+    "patched-modules",
+    "polyfills"
   ]
 }

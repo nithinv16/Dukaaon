@@ -7,7 +7,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "jest --watchAll",
+    "test": "jest",
+    "test:watch": "jest --watchAll",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx --max-warnings=0",
     "postinstall": "patch-package"
   },
   "jest": {
@@ -102,12 +105,14 @@
     "@types/jest": "^30.0.0",
     "@types/react": "~18.3.12",
     "baseline-browser-mapping": "^2.8.32",
+    "eslint": "8.57.0",
+    "eslint-config-expo": "8.0.1",
     "fast-check": "^4.3.0",
     "jest": "^29.2.1",
-    "jest-expo": "~52.0.6",
+    "jest-expo": "53.0.14",
     "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",
-    "react-test-renderer": "18.2.0",
+    "react-test-renderer": "19.0.0",
     "sharp": "^0.34.5",
     "typescript": "^5.3.3",
     "webpack": "^5.99.9"

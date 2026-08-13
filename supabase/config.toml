@@ -40,6 +40,12 @@ verify_jwt = true
 import_map = "./functions/razorpay-function/deno.json"
 entrypoint = "./functions/razorpay-function/index.ts"
 
+[functions.verify-razorpay-payment]
+enabled = true
+verify_jwt = true
+import_map = "./functions/verify-razorpay-payment/deno.json"
+entrypoint = "./functions/verify-razorpay-payment/index.ts"
+
 [functions.whatsapp-webhook]
 enabled = true
 verify_jwt = false  # Webhook from Authkey doesn't have JWT

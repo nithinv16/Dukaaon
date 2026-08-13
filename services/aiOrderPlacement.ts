@@ -62,7 +62,7 @@ export const placeAIOrder = async (params: PlaceOrderParams): Promise<PlaceOrder
                 total_amount: totalAmount, // Store subtotal only (without delivery fee)
                 delivery_fee: deliveryFee, // Explicitly include delivery fee
                 status: 'pending',
-                payment_status: paymentMethod === 'cod' ? 'pending' : 'not_paid',
+                payment_status: 'pending',
                 payment_method: paymentMethod,
                 seller_ids: [sellerId]
             })

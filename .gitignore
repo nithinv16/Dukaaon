@@ -134,3 +134,24 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Bug-condition probe artifacts (task 4, .kiro/specs/critical-security-and-error-fixes)
+# Exported bundles inspected by tests/security/razorpaySecretInBuildArtifacts.bugCondition.test.ts.
+.probe-export/
+.probe-export-js/
+.probe-export-fixed/
+
+# Build logs and dump files (task 25)
+build_log*.txt
+gradle_build_log*.txt
+build-error*.txt
+*_manifest.txt
+autolinking*.txt
+eas-build-report.txt
+exclusion-test-report.txt
+expo-doctor-output.txt
+settings-*.txt
+rn-config.txt
+android/build_*.txt
+gradle_properties.txt
+manifest_check.txt
