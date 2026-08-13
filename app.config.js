@@ -10,12 +10,84 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = 'development';
 }
 
-// Guard: fail the build loudly when required payment config is absent
-if (!process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID) {
+// Guard: fail the build loudly when required client config is absent.
+//
+// Build time is the right place for this. These values are read at runtime by
+// config/secrets.ts, which deliberately does NOT throw — a module-scope throw
+// there would blank the screen before React mounts, with no ErrorBoundary and
+// no Sentry event. Catching it here means a misconfigured build cannot be
+// produced in the first place.
+//
+// Note EXPO_PUBLIC_ prefixes: only prefixed variables are inlined into the JS
+// bundle. A non-prefixed variable is visible to this file but invisible to the
+// app, which is exactly the trap that shipped an unusable Supabase config.
+const REQUIRED_CLIENT_ENV = [
+  ['EXPO_PUBLIC_SUPABASE_URL', 'Supabase project URL, e.g. https://<ref>.supabase.co'],
+  ['EXPO_PUBLIC_SUPABASE_ANON_KEY', 'Supabase anon (publishable) key'],
+  ['EXPO_PUBLIC_RAZORPAY_KEY_ID', 'Razorpay key id (rzp_live_… / rzp_test_…)'],
+];
+
+const missingClientEnv = REQUIRED_CLIENT_ENV.filter(([name]) => !process.env[name]);
+if (missingClientEnv.length > 0) {
   throw new Error(
-    'EXPO_PUBLIC_RAZORPAY_KEY_ID is not set. ' +
-    'Add it to your .env file or EAS secrets before building.'
+    'Missing required client configuration:\n' +
+      missingClientEnv.map(([name, desc]) => `  - ${name}  (${desc})`).join('\n') +
+      '\n\nAdd these to your .env file or EAS secrets before building.'
   );
+}
+
+// Guard: a secret must never be published to the client bundle. Anything with an
+// EXPO_PUBLIC_ prefix is inlined by Metro as a string literal and is trivially
+// recoverable from a shipped APK, so holding a provider credential this way is
+// equivalent to publishing it.
+//
+// These are always secrets and are never acceptable in a client build.
+const FORBIDDEN_CLIENT_ENV = [
+  'EXPO_PUBLIC_RAZORPAY_KEY_SECRET',
+  'EXPO_PUBLIC_AZURE_CLIENT_SECRET',
+];
+
+// These are being migrated behind server-side proxy edge functions. Until that
+// migration completes they are still read by client code, so absence would break
+// features rather than protect anything — they are reported loudly instead.
+//
+// FLIP THIS to true once every service below reaches AWS through an edge
+// function and the variables have been deleted from .env / EAS secrets. At that
+// point the entries move into FORBIDDEN_CLIENT_ENV above and this list is
+// removed. Tracked as the "no provider credential in the client" work.
+const ENFORCE_MIGRATING_SECRETS = false;
+const MIGRATING_CLIENT_ENV = [
+  'EXPO_PUBLIC_AWS_ACCESS_KEY_ID',
+  'EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY',
+  'EXPO_PUBLIC_AWS_BEDROCK_API_KEY',
+  'EXPO_PUBLIC_WHATSAPP_ACCESS_TOKEN',
+  'EXPO_PUBLIC_AUTHKEY_API_KEY',
+];
+
+const describeLeak = (names) =>
+  names.map((name) => `  - ${name}`).join('\n') +
+  '\n\nRemove these from .env / EAS secrets. Server-side credentials belong in ' +
+  'Supabase Edge Function secrets and must be reached through a proxy function.';
+
+const publishedSecrets = FORBIDDEN_CLIENT_ENV.filter((name) => !!process.env[name]);
+if (publishedSecrets.length > 0) {
+  throw new Error(
+    'Refusing to build: these secrets would be inlined into the JS bundle and ' +
+      'are recoverable from the shipped app:\n' +
+      describeLeak(publishedSecrets)
+  );
+}
+
+const migratingSecrets = MIGRATING_CLIENT_ENV.filter((name) => !!process.env[name]);
+if (migratingSecrets.length > 0) {
+  const message =
+    'These credentials will be inlined into the JS bundle and are recoverable ' +
+    'from the shipped app:\n' +
+    describeLeak(migratingSecrets);
+  if (ENFORCE_MIGRATING_SECRETS) {
+    throw new Error('Refusing to build: ' + message);
+  }
+  console.warn('\n[app.config] SECURITY WARNING: ' + message + '\n');
 }
 
 // Expo configuration

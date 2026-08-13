@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 // Firebase import removed - using Supabase auth only
 import NetInfo from '@react-native-community/netinfo';
-import { supabaseConfig } from '../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../config/secrets';
 import { ServiceError, ErrorCode } from '../errors';
 import { LoggingService } from '../logging/LoggingService';
 
@@ -18,7 +18,7 @@ const fetchWithTimeout = (url: string, options: RequestInit, timeoutMs: number):
 const logger = LoggingService.createScope('Supabase');
 
 // Supabase auth storage key
-const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
 
 // Safe storage adapter that wraps AsyncStorage with error handling
 // This prevents unhandled exceptions during session restore

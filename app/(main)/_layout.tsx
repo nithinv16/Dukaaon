@@ -10,7 +10,7 @@ import { supabase } from '../../services/supabase/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEdgeToEdge, getSafeAreaStyles } from '../../utils/android15EdgeToEdge';
 import { BottomNavProvider, useBottomNav } from '../../contexts/BottomNavContext';
-import { supabaseConfig } from '../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../config/secrets';
 
 // Define Stack type
 type StackType = React.ComponentType<{
@@ -212,7 +212,7 @@ export default function MainLayout() {
 
         // Fallback: Try direct fetch with access token from AsyncStorage (more reliable than session state)
         try {
-          const authKey = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+          const authKey = supabaseAuthStorageKey;
           const sessionStr = await AsyncStorage.getItem(authKey);
 
           if (sessionStr) {

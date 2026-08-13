@@ -24,6 +24,7 @@ import { SystemStatusBar } from '../../../../components/SystemStatusBar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabaseAuthStorageKey } from '../../../../config/secrets';
 
 // Theme colors
 const THEME = {
@@ -37,7 +38,7 @@ const THEME = {
 const SELLER_PORTAL_URL = 'https://seller.dukaaon.in';
 
 // Supabase auth storage key - must match the one used in supabase.ts
-const SUPABASE_AUTH_KEY = 'sb-xcpznnkpjgyrpbvpnvit-auth-token';
+const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
 
 export default function SellerWebPortal() {
     const router = useRouter();
@@ -118,7 +119,7 @@ export default function SellerWebPortal() {
             
             // Store in localStorage for Supabase to pick up
             // Supabase client looks for session in localStorage with specific key format
-            const supabaseKey = 'sb-xcpznnkpjgyrpbvpnvit-auth-token';
+            const supabaseKey = supabaseAuthStorageKey;
             const sessionData = {
               access_token: accessToken,
               refresh_token: refreshToken,

@@ -8,7 +8,7 @@ import { useLanguage } from '../../../../contexts/LanguageContext';
 import { translationService } from '../../../../services/translationService';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SystemStatusBar } from '../../../../components/SystemStatusBar';
-import { supabaseConfig } from '../../../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../../../config/secrets';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // --- Wholesaler Premium Theme (Navy/Teal) ---
@@ -283,7 +283,7 @@ export default function QuickAddProducts() {
       console.log('getTotalProductsCount: Starting...');
 
       // Get access token
-      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
       const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
       let accessToken = '';
       if (sessionStr) {
@@ -353,7 +353,7 @@ export default function QuickAddProducts() {
       console.log('fetchMasterProducts: Starting with page', page, 'search:', searchTerm);
 
       // Get access token
-      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
       const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
       let accessToken = '';
       if (sessionStr) {
@@ -826,7 +826,7 @@ export default function QuickAddProducts() {
       console.log('addSelectedProductsToInventory: Starting with', selectedProductsList.length, 'products');
 
       // Get access token for direct fetch
-      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
       const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
       let accessToken = '';
       if (sessionStr) {

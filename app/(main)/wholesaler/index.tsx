@@ -7,7 +7,7 @@ import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../../services/supabase/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabaseConfig } from '../../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../../config/secrets';
 import { useAuthStore } from '../../../store/auth';
 import { SellerDetails } from '../../../types/auth';
 import MapView, { Marker } from 'react-native-maps';
@@ -385,7 +385,7 @@ export default function WholesalerHome() {
               setLoadingPendingOrders(true);
 
               // Get access token from AsyncStorage
-              const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+              const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
               const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
               let accessToken = '';
               if (sessionStr) {
@@ -548,7 +548,7 @@ export default function WholesalerHome() {
       // FALLBACK 2: Direct REST API fetch with token from AsyncStorage
       console.log('🔄 Trying direct fetch with access token from AsyncStorage...');
       try {
-        const authKey = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+        const authKey = supabaseAuthStorageKey;
         const sessionStr = await AsyncStorage.getItem(authKey);
 
         if (sessionStr) {
@@ -1583,7 +1583,7 @@ export default function WholesalerHome() {
       setLoadingCompletedDeliveries(true);
 
       // Get access token from AsyncStorage
-      const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+      const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
       const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
       let accessToken = '';
       if (sessionStr) {

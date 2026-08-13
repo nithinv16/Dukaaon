@@ -1,5 +1,6 @@
 import RazorpayCheckout from 'react-native-razorpay';
 import { razorpayConfig } from '../../config/razorpay';
+import { supabaseConfig } from '../../config/secrets';
 import { PaymentMethodType } from '../../types/payment';
 
 export interface RazorpayPaymentOptions {
@@ -49,10 +50,10 @@ class RazorpayServiceClass {
     this.keyId = razorpayConfig.keyId;
     this.merchantName = razorpayConfig.merchantName;
     
-    // Get Supabase URL from config or environment
-    this.supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 
-                      process.env.SUPABASE_URL || 
-                      'https://xcpznnkpjgyrpbvpnvit.supabase.co';
+    // Single source of truth. `process.env.SUPABASE_URL` never resolved at
+    // runtime (only EXPO_PUBLIC_* reach the bundle), so this previously always
+    // fell through to a hardcoded project URL.
+    this.supabaseUrl = supabaseConfig.url;
     
     // Debug: Log the actual key ID being used (first 15 chars for security)
     console.log('[RazorpayService] Initialized with Key ID:', 

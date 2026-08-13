@@ -6,11 +6,11 @@
  */
 
 import { supabase } from '../supabase/supabase';
-import { supabaseConfig } from '../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../config/secrets';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Helper to get auth key
-const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
 
 interface Category {
   id: string;

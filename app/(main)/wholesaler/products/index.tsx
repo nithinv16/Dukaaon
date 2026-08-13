@@ -3,7 +3,7 @@ import { View, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Platform
 import { Text, Card, Button, IconButton, Searchbar, FAB, Menu, Portal, Modal } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../../../services/supabase/supabase';
-import { supabaseConfig } from '../../../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../../../config/secrets';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../../../../store/auth';
 import { useEdgeToEdge, getSafeAreaStyles } from '../../../../utils/android15EdgeToEdge';
@@ -247,7 +247,7 @@ export default function ProductManagement() {
         console.log('ProductManagement: Fetching products with direct fetch API...');
 
         // Get access token
-        const SUPABASE_AUTH_KEY = `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+        const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
         const sessionStr = await AsyncStorage.getItem(SUPABASE_AUTH_KEY);
         let accessToken = '';
         if (sessionStr) {

@@ -18,6 +18,7 @@ import { useAuthStore } from '../store/auth';
 import { SimpleAuthLoader } from '../services/auth/SimpleAuthLoader';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase, setCachedAccessToken, initializeSupabaseSession } from '../services/supabase/supabase';
+import { supabaseConfig, supabaseAuthStorageKey } from '../config/secrets';
 
 // Get screen dimensions
 const { width, height } = Dimensions.get('window');
@@ -25,10 +26,13 @@ const { width, height } = Dimensions.get('window');
 // Maximum splash duration
 const MAX_SPLASH_DURATION_MS = 10000;
 
-// Supabase configuration
-const SUPABASE_URL = 'https://xcpznnkpjgyrpbvpnvit.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjcHpubmtwamd5cnBidnBudml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg2MTc3MjgsImV4cCI6MjA1NDE5MzcyOH0.1Gg97eXqRmNcZpmKYaBNDozfc_mXrgFv_uHj-br-u_k';
-const SUPABASE_AUTH_KEY = 'sb-xcpznnkpjgyrpbvpnvit-auth-token';
+// Supabase configuration — single source of truth is config/secrets.ts.
+// These were previously hardcoded here, which meant the project could not be
+// changed without editing app code and kept a copy of the anon key in a second
+// place.
+const SUPABASE_URL = supabaseConfig.url;
+const SUPABASE_ANON_KEY = supabaseConfig.anonKey;
+const SUPABASE_AUTH_KEY = supabaseAuthStorageKey;
 
 export default function Index() {
   const router = useRouter();

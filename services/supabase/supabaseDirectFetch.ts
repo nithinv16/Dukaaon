@@ -8,11 +8,11 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabaseConfig } from '../../config/secrets';
+import { supabaseConfig, supabaseAuthStorageKey } from '../../config/secrets';
 
 // Get the auth key dynamically
 const getSupabaseAuthKey = () => {
-    return `sb-${supabaseConfig.url.split('//')[1].split('.')[0]}-auth-token`;
+    return supabaseAuthStorageKey;
 };
 
 // Get access token from AsyncStorage

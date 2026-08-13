@@ -34,6 +34,7 @@ import { ProductCacheService } from '../services/products/ProductCacheService';
 // Import services for early initialization
 import { dynamicCategoryService } from '../services/dynamic/dynamicCategoryService';
 import { translationService } from '../services/translationService';
+import { supabaseConfigError } from '../config/secrets';
 
 Sentry.init({
   dsn: 'https://571c5f83af1d8cbcd0fb71edfd76a1c0@o4509453256622080.ingest.de.sentry.io/4509453272744016',
@@ -51,7 +52,36 @@ Sentry.init({
   // spotlight: __DEV__,
 });
 
+/**
+ * Shown when the app is built without usable Supabase configuration.
+ *
+ * config/secrets.ts deliberately reports rather than throws, because a
+ * module-scope throw happens before React mounts and yields a blank screen with
+ * no ErrorBoundary and no Sentry event. app.config.js fails the build when these
+ * values are absent, so this should be unreachable in a released build — it
+ * exists so that if it ever is reached, the cause is legible.
+ */
+function ConfigurationErrorScreen({ message }: { message: string }) {
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#fff' }}>
+      <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#C62828', marginBottom: 12 }}>
+        Configuration error
+      </Text>
+      <Text style={{ fontSize: 14, color: '#333', lineHeight: 20 }}>{message}</Text>
+    </View>
+  );
+}
+
 export default Sentry.wrap(function RootLayout() {
+  // Report a broken build immediately and legibly, before any provider tries to
+  // use the Supabase client and fails somewhere unrelated.
+  useEffect(() => {
+    if (supabaseConfigError) {
+      console.error('[App] Supabase configuration error:', supabaseConfigError);
+      Sentry.captureException(new Error(`Supabase misconfigured: ${supabaseConfigError}`));
+    }
+  }, []);
+
   const session = useAuthStore((state: any) => state.session);
   const loading = useAuthStore((state: any) => state.loading);
   const checkNotificationPermissions = useSettingsStore((state) => state.checkNotificationPermissions);
@@ -185,6 +215,12 @@ export default Sentry.wrap(function RootLayout() {
       setShowLoading(false);
     }
   }, [loading, session]);
+
+  // A build without Supabase configuration cannot do anything useful, so say so
+  // rather than rendering a UI whose every request will fail.
+  if (supabaseConfigError) {
+    return <ConfigurationErrorScreen message={supabaseConfigError} />;
+  }
 
   // Show loading state ONLY if auth is being checked AND we don't have a session
   // This should be very brief - SimpleAuthLoader in index.tsx handles fast navigation
