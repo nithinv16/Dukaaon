@@ -51,3 +51,37 @@ enabled = true
 verify_jwt = false  # Webhook from Authkey doesn't have JWT
 import_map = "./functions/whatsapp-webhook/deno.json"
 entrypoint = "./functions/whatsapp-webhook/index.ts"
+
+# ---------------------------------------------------------------------------
+# AI proxies.
+#
+# These exist so that no AWS credential is ever present in the client bundle.
+# Anything with an EXPO_PUBLIC_ prefix is inlined by Metro as a string literal
+# and is recoverable from a shipped APK, so the previous direct-from-client
+# Azure/AWS/Google calls were effectively publishing their keys.
+#
+# All three require a verified JWT and additionally enforce a per-user quota via
+# consume_ai_rate_limit (see 20250713000000_ai_proxy_rate_limits.sql), because
+# authentication alone does not bound spend on a paid API.
+#
+# Required function secrets:
+#   supabase secrets set AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=...
+# ---------------------------------------------------------------------------
+
+[functions.ai-translate]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ai-translate/deno.json"
+entrypoint = "./functions/ai-translate/index.ts"
+
+[functions.ai-ocr]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ai-ocr/deno.json"
+entrypoint = "./functions/ai-ocr/index.ts"
+
+[functions.ai-chat]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ai-chat/deno.json"
+entrypoint = "./functions/ai-chat/index.ts"
