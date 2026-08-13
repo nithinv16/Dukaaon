@@ -1,4 +1,4 @@
-import { AZURE_AI_CONFIG } from '../../config/azureAI';
+import { proxyOcr } from '../ai/aiProxyClient';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Alert } from 'react-native';
@@ -24,16 +24,18 @@ export interface OCRResponse {
   error?: string;
 }
 
-class AzureOCRService {
-  private apiKey: string;
-  private endpoint: string;
-  private region: string;
-
-  constructor() {
-    this.apiKey = AZURE_AI_CONFIG.computerVisionKey;
-    this.endpoint = AZURE_AI_CONFIG.computerVisionEndpoint;
-    this.region = AZURE_AI_CONFIG.computerVisionRegion;
-  }
+/**
+ * OCR via the `ai-ocr` edge function (AWS Textract).
+ *
+ * Holds no provider configuration. This previously read
+ * AZURE_AI_CONFIG.computerVisionKey, which came from
+ * EXPO_PUBLIC_AZURE_COMPUTER_VISION_KEY with a live key hardcoded as a fallback —
+ * so the key was inlined into the JS bundle and recoverable from any shipped APK.
+ *
+ * The class name and the exported OCRResponse shape are unchanged so the six
+ * call sites are unaffected.
+ */
+class OCRService {
 
   /**
    * Request camera permissions
@@ -194,43 +196,29 @@ class AzureOCRService {
   }
 
   /**
-   * Extract text from base64 image using Azure Computer Vision OCR
+   * Extract text from a base64 image via the ai-ocr edge function.
+   *
+   * Textract's DetectDocumentText is synchronous, so the previous
+   * submit -> Operation-Location -> poll-up-to-10-times sequence is gone; there is
+   * nothing to poll. That also removes the up-to-10-second worst case.
    */
   private async extractTextFromBase64(base64Image: string): Promise<OCRResponse> {
     try {
-      if (!this.apiKey || !this.endpoint) {
-        throw new Error('Azure Computer Vision API key or endpoint not configured');
-      }
+      const result = await proxyOcr(base64Image);
 
-      // Convert base64 to binary
-      const binaryImage = atob(base64Image);
-      const bytes = new Uint8Array(binaryImage.length);
-      for (let i = 0; i < binaryImage.length; i++) {
-        bytes[i] = binaryImage.charCodeAt(i);
-      }
-
-      const response = await fetch(`${this.endpoint}/vision/v3.2/read/analyze`, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': this.apiKey,
-          'Content-Type': 'application/octet-stream',
-        },
-        body: bytes,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OCR API request failed: ${response.status} - ${errorText}`);
-      }
-
-      // Get the operation location from response headers
-      const operationLocation = response.headers.get('Operation-Location');
-      if (!operationLocation) {
-        throw new Error('No operation location returned from OCR API');
-      }
-
-      // Poll for results
-      return await this.pollForResults(operationLocation);
+      return {
+        extractedText: result.text,
+        results: result.lines.map((line) => ({
+          text: line.text,
+          confidence: line.confidence,
+          language: 'en',
+        })),
+        language: 'en',
+        // Textract does not report page orientation. Azure did, but no caller
+        // reads this field; kept at 0 to preserve the response shape.
+        orientation: 0,
+        success: true,
+      };
     } catch (error) {
       console.error('Error extracting text from image:', error);
       return {
@@ -240,116 +228,6 @@ class AzureOCRService {
         orientation: 0,
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
-  }
-
-  /**
-   * Poll for OCR results
-   */
-  private async pollForResults(operationLocation: string): Promise<OCRResponse> {
-    const maxAttempts = 10;
-    const pollInterval = 1000; // 1 second
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const response = await fetch(operationLocation, {
-          method: 'GET',
-          headers: {
-            'Ocp-Apim-Subscription-Key': this.apiKey,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Polling failed: ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        if (result.status === 'succeeded') {
-          return this.parseOCRResults(result);
-        } else if (result.status === 'failed') {
-          throw new Error('OCR operation failed');
-        }
-
-        // Wait before next poll
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-      } catch (error) {
-        console.error(`Polling attempt ${attempt + 1} failed:`, error);
-        if (attempt === maxAttempts - 1) {
-          throw error;
-        }
-      }
-    }
-
-    throw new Error('OCR operation timed out');
-  }
-
-  /**
-   * Parse OCR results from Azure Computer Vision response
-   */
-  private parseOCRResults(apiResponse: any): OCRResponse {
-    try {
-      const analyzeResult = apiResponse.analyzeResult;
-      if (!analyzeResult || !analyzeResult.readResults) {
-        throw new Error('Invalid OCR response format');
-      }
-
-      let extractedText = '';
-      const results: OCRResult[] = [];
-      let detectedLanguage = 'en';
-      let orientation = 0;
-
-      // Process each page
-      for (const page of analyzeResult.readResults) {
-        if (page.language) {
-          detectedLanguage = page.language;
-        }
-        if (page.angle !== undefined) {
-          orientation = page.angle;
-        }
-
-        // Process each line
-        for (const line of page.lines || []) {
-          extractedText += line.text + '\n';
-          
-          // Create result object for each line
-          const result: OCRResult = {
-            text: line.text,
-            confidence: line.appearance?.style?.confidence || 0.9,
-            language: detectedLanguage,
-          };
-
-          // Add bounding box if available
-          if (line.boundingBox && line.boundingBox.length >= 4) {
-            result.boundingBox = {
-              x: line.boundingBox[0],
-              y: line.boundingBox[1],
-              width: line.boundingBox[4] - line.boundingBox[0],
-              height: line.boundingBox[5] - line.boundingBox[1],
-            };
-          }
-
-          results.push(result);
-        }
-      }
-
-      return {
-        extractedText: extractedText.trim(),
-        results,
-        language: detectedLanguage,
-        orientation,
-        success: true,
-      };
-    } catch (error) {
-      console.error('Error parsing OCR results:', error);
-      return {
-        extractedText: '',
-        results: [],
-        language: 'en',
-        orientation: 0,
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to parse OCR results'
       };
     }
   }
@@ -389,4 +267,4 @@ class AzureOCRService {
   }
 }
 
-export default new AzureOCRService();
+export default new OCRService();

@@ -8,7 +8,6 @@
 
 import * as Speech from 'expo-speech';
 import { Platform, Alert } from 'react-native';
-import { VOICE_CONFIG } from '../../config/awsBedrock';
 import { realtimeVoiceService, VoiceRecognitionResult, RealtimeVoiceServiceStatus } from './realtimeVoiceService';
 
 export interface SpeechRecognitionResult {

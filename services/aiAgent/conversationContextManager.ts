@@ -8,6 +8,7 @@
 import { supabase } from '../supabase/supabase';
 import { AIMessage } from './bedrockAIService';
 import { bedrockAIService } from './bedrockAIService';
+import { proxyChat } from '../ai/aiProxyClient';
 
 export interface ConversationSummary {
   id: string;
@@ -306,60 +307,33 @@ ${conversationText}`;
    */
   private async generateSummaryWithAI(messages: AIMessage[]): Promise<string | null> {
     try {
-      // Use bedrock service directly with minimal context
-      const { BEDROCK_CONFIG, AWS_CONFIG } = await import('../../config/awsBedrock');
-      const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
-
-      const accessKeyId = AWS_CONFIG.credentials.accessKeyId || process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || '';
-      const secretAccessKey = AWS_CONFIG.credentials.secretAccessKey || process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || '';
-      const region = AWS_CONFIG.region || process.env.EXPO_PUBLIC_AWS_REGION || 'us-east-1';
-
-      const bedrockClient = new BedrockRuntimeClient({
-        region: region,
-        credentials: {
-          accessKeyId: accessKeyId,
-          secretAccessKey: secretAccessKey,
-        },
-      });
-
+      // Routed through the ai-chat edge function. This previously built its own
+      // BedrockRuntimeClient from EXPO_PUBLIC_AWS_* credentials, which Metro
+      // inlines into the JS bundle — a second copy of the same account-wide IAM
+      // credential leak that bedrockAIService had.
       const claudeMessages = messages
         .filter(msg => msg.role !== 'system')
         .map(msg => ({
-          role: msg.role === 'system' ? 'user' : msg.role,
+          role: (msg.role === 'system' ? 'user' : msg.role) as 'user' | 'assistant',
           content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
         }));
 
-      const systemPrompt = messages.find(msg => msg.role === 'system')?.content || 
-        'You are a helpful assistant that creates concise conversation summaries.';
-
-      const payload = {
-        anthropic_version: BEDROCK_CONFIG.anthropicVersion || 'bedrock-2023-05-31',
-        max_tokens: 2000, // Summary should be concise
-        temperature: 0.3, // Lower temperature for more consistent summaries
-        system: systemPrompt,
-        messages: claudeMessages,
-      };
-
-      const command = new InvokeModelCommand({
-        modelId: BEDROCK_CONFIG.modelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify(payload),
-      });
-
-      const response = await bedrockClient.send(command);
-      const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-
-      if (responseBody.content && Array.isArray(responseBody.content)) {
-        const textContent = responseBody.content
-          .filter((item: any) => item.type === 'text')
-          .map((item: any) => item.text)
-          .join('');
-
-        return textContent.trim();
+      if (claudeMessages.length === 0) {
+        return null;
       }
 
-      return null;
+      const systemPrompt = messages.find(msg => msg.role === 'system')?.content ||
+        'You are a helpful assistant that creates concise conversation summaries.';
+
+      const result = await proxyChat({
+        messages: claudeMessages,
+        system: typeof systemPrompt === 'string' ? systemPrompt : String(systemPrompt),
+        maxTokens: 2000,   // Summary should be concise
+        temperature: 0.3,  // Lower temperature for more consistent summaries
+      });
+
+      const textContent = result.text.trim();
+      return textContent.length > 0 ? textContent : null;
     } catch (error) {
       console.error('[ConversationContextManager] Error generating summary with AI:', error);
       // Fallback: Create a simple summary

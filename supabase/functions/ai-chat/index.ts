@@ -11,15 +11,25 @@
  *   {
  *     system?: string,
  *     messages: Array<{ role: 'user'|'assistant', content: string | ContentBlock[] }>,
+ *     tools?: Array<{ name, description?, input_schema }>,
  *     maxTokens?: number,
  *     temperature?: number,
  *     model?: string        // must be allow-listed below
  *   }
- * Response: { text: string, stopReason: string, usage: {...} }
+ * Response: { content: ClaudeBlock[], text: string, stopReason: string, usage: {...} }
  *
  * The Claude request body is assembled here rather than accepted from the client,
  * so a caller cannot smuggle arbitrary Bedrock parameters or target a model the
  * account pays a premium for.
+ *
+ * `content` is returned as the raw Claude block array, not just flattened text,
+ * because the ordering agent depends on `tool_use` blocks to drive function
+ * calling. Returning text alone would silently disable that entire feature.
+ *
+ * `tools` is accepted from the client by design: a tool schema describes
+ * functions the *client* will execute itself, so it grants no server-side
+ * capability. The boundary that matters — AWS credentials, model choice, token
+ * ceilings — stays here. Schemas are still shape-checked and size-capped.
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -52,10 +62,13 @@ const MAX_MESSAGES = 40;
 const MAX_SYSTEM_CHARS = 40_000;
 const MAX_TEXT_CHARS = 20_000;
 const MAX_OUTPUT_TOKENS = 8_192;
+const MAX_TOOLS = 32;
+const MAX_TOOL_SCHEMA_CHARS = 20_000;
 
 interface ChatBody {
   system?: unknown;
   messages?: unknown;
+  tools?: unknown;
   maxTokens?: unknown;
   temperature?: unknown;
   model?: unknown;
@@ -63,7 +76,15 @@ interface ChatBody {
 
 type ContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean };
+
+interface ClaudeTool {
+  name: string;
+  description?: string;
+  input_schema: Record<string, unknown>;
+}
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
@@ -95,6 +116,9 @@ Deno.serve(async (req) => {
   const messages = normaliseMessages(parsed.messages);
   if (messages instanceof Response) return messages;
 
+  const tools = normaliseTools(parsed.tools);
+  if (tools instanceof Response) return tools;
+
   const maxTokens = clampInt(parsed.maxTokens, 1, MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
   const temperature = clampFloat(parsed.temperature, 0, 1, 0.1);
 
@@ -115,14 +139,18 @@ Deno.serve(async (req) => {
       temperature,
       ...(system ? { system } : {}),
       messages,
+      ...(tools.length > 0 ? { tools } : {}),
     });
 
-    const text = (result.content ?? [])
+    const content = result.content ?? [];
+    const text = content
       .filter((block) => block.type === "text" && typeof block.text === "string")
       .map((block) => block.text as string)
       .join("");
 
     return jsonResponse({
+      // Raw Claude blocks: the agent needs tool_use entries, not just text.
+      content,
       text,
       stopReason: result.stop_reason ?? "end_turn",
       usage: {
@@ -148,6 +176,60 @@ Deno.serve(async (req) => {
     return errorResponse("Internal server error", 500);
   }
 });
+
+/**
+ * Validate the tool schema array.
+ *
+ * These describe functions the client executes locally, so they confer no
+ * server-side capability — but they are still forwarded to a paid API, so the
+ * count and serialised size are bounded, and each entry is rebuilt to drop
+ * unrecognised fields.
+ */
+function normaliseTools(raw: unknown): ClaudeTool[] | Response {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    return errorResponse("`tools` must be an array", 400);
+  }
+  if (raw.length > MAX_TOOLS) {
+    return errorResponse(`At most ${MAX_TOOLS} tools per request`, 400);
+  }
+
+  const tools: ClaudeTool[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") {
+      return errorResponse("Each tool must be an object", 400);
+    }
+    const t = entry as Record<string, unknown>;
+
+    const name = typeof t.name === "string" ? t.name : "";
+    // Anthropic requires tool names to match ^[a-zA-Z0-9_-]{1,64}$.
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
+      return errorResponse(`Invalid tool name "${name}"`, 400);
+    }
+    if (seen.has(name)) {
+      return errorResponse(`Duplicate tool name "${name}"`, 400);
+    }
+    seen.add(name);
+
+    const schema = t.input_schema;
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+      return errorResponse(`Tool "${name}" requires an input_schema object`, 400);
+    }
+    if (JSON.stringify(schema).length > MAX_TOOL_SCHEMA_CHARS) {
+      return errorResponse(`Tool "${name}" input_schema is too large`, 400);
+    }
+
+    tools.push({
+      name,
+      ...(typeof t.description === "string" ? { description: t.description } : {}),
+      input_schema: schema as Record<string, unknown>,
+    });
+  }
+
+  return tools;
+}
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === "number" ? Math.floor(value) : NaN;
@@ -227,6 +309,37 @@ function normaliseMessages(
           return errorResponse("Image data must be base64-encoded", 400);
         }
         blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
+        continue;
+      }
+
+      // tool_use / tool_result must be accepted so a multi-turn function-calling
+      // exchange can be replayed back to the model. Without these the agent could
+      // make one tool call and never report the result.
+      if (b.type === "tool_use") {
+        const id = typeof b.id === "string" ? b.id : "";
+        const name = typeof b.name === "string" ? b.name : "";
+        if (!id || !name) {
+          return errorResponse("tool_use blocks require `id` and `name`", 400);
+        }
+        blocks.push({ type: "tool_use", id, name, input: b.input ?? {} });
+        continue;
+      }
+
+      if (b.type === "tool_result") {
+        const toolUseId = typeof b.tool_use_id === "string" ? b.tool_use_id : "";
+        if (!toolUseId) {
+          return errorResponse("tool_result blocks require `tool_use_id`", 400);
+        }
+        const serialised = JSON.stringify(b.content ?? "");
+        if (serialised.length > MAX_TEXT_CHARS) {
+          return errorResponse(`tool_result content exceeds ${MAX_TEXT_CHARS} characters`, 400);
+        }
+        blocks.push({
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content: b.content ?? "",
+          ...(typeof b.is_error === "boolean" ? { is_error: b.is_error } : {}),
+        });
         continue;
       }
 

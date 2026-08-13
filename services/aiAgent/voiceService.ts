@@ -1,7 +1,6 @@
 // Voice Services - React Native Compatible Implementation
 // Note: AWS SDK imports removed for React Native compatibility
 
-import { VOICE_CONFIG } from '../../config/awsBedrock';
 
 export interface VoiceSearchRequest {
   audioBlob: Blob;

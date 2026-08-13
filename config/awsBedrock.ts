@@ -1,24 +1,20 @@
 // AWS Bedrock Configuration
-// Note: Using AWS SDK for JavaScript (@aws-sdk/client-bedrock-runtime)
+/**
+ * Bedrock model and agent configuration.
+ *
+ * Contains NO credentials. The former `AWS_CONFIG` export read
+ * EXPO_PUBLIC_AWS_ACCESS_KEY_ID / EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY, which Metro
+ * inlines into the JS bundle as string literals — so a long-lived IAM credential
+ * valid against the whole AWS account was recoverable from any shipped APK.
+ *
+ * AWS credentials now exist only in the `ai-chat` edge function's environment
+ * (see supabase/functions/_shared/aws.ts). Model selection and token ceilings are
+ * enforced server-side as well, so the values below are advisory: the proxy
+ * allow-lists model ids and clamps limits regardless of what the client sends.
+ */
 
-// Default region for cross-region inference profile
-const DEFAULT_REGION = 'us-east-1';
-
-// Environment credentials
-const CORRECT_ACCESS_KEY = process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || '';
-const CORRECT_SECRET_KEY = process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || '';
-
-console.log('[AWS Config] Access Key ID:', CORRECT_ACCESS_KEY ? CORRECT_ACCESS_KEY.substring(0, 8) + '...' : 'not set');
-console.log('[AWS Config] Region:', DEFAULT_REGION);
-
-// AWS Configuration
-export const AWS_CONFIG = {
-  region: process.env.EXPO_PUBLIC_AWS_REGION || DEFAULT_REGION,
-  credentials: {
-    accessKeyId: CORRECT_ACCESS_KEY,
-    secretAccessKey: CORRECT_SECRET_KEY,
-  },
-};
+// Retained for reference and for the request payload the proxy normalises. The
+// authoritative model id is the one allow-listed in supabase/functions/ai-chat.
 
 // Bedrock Configuration - Using Claude models with inference profile
 export const BEDROCK_CONFIG = {
@@ -290,9 +286,9 @@ Context: You have access to a comprehensive product database with categories lik
 };
 
 export default {
-  AWS_CONFIG,
   BEDROCK_CONFIG,
   VOICE_CONFIG,
   AI_AGENT_CONFIG,
-  // AWS SDK clients removed for React Native compatibility
+  // AWS_CONFIG removed: it exposed IAM credentials to the client bundle.
+  // Credentials live in the ai-chat edge function's environment.
 };

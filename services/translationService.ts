@@ -1,11 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// Fetch with timeout using AbortController
-const fetchWithTimeout = (url: string, options: RequestInit, timeoutMs: number = 10000): Promise<Response> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
-};
+import { proxyTranslate, proxyDetectLanguage } from './ai/aiProxyClient';
 
 // Supported languages
 export type SupportedLanguage = 'en' | 'hi' | 'ml' | 'ta' | 'te' | 'kn' | 'mr' | 'bn';
@@ -33,17 +27,18 @@ interface TranslationCache {
   };
 }
 
-// Azure Translator configuration
-const AZURE_CONFIG = {
-  key: process.env.EXPO_PUBLIC_AZURE_TRANSLATOR_KEY || 'BoAylDHkLnHj3WloBq5loZL22t2fVCd3YPwSFtIdINazL8C4IeZ0JQQJ99BIACHYHv6XJ3w3AAAAACOGnwpd',
-  region: process.env.EXPO_PUBLIC_AZURE_TRANSLATOR_REGION || 'eastus2',
-  endpoint: process.env.EXPO_PUBLIC_AZURE_TRANSLATOR_ENDPOINT || 'https://api.cognitive.microsofttranslator.com',
-};
+// Translation is served by the `ai-translate` edge function (AWS Translate +
+// Comprehend). There is deliberately no provider configuration here: the previous
+// AZURE_CONFIG read EXPO_PUBLIC_AZURE_TRANSLATOR_KEY with a live key hardcoded as
+// a fallback, so the subscription key was inlined into the JS bundle and
+// recoverable from any shipped APK — and it leaked even when the env var was set.
 
 // Cache configuration
 const CACHE_CONFIG = {
   maxEntries: 2000, // Increased for more cached translations
   expiryMs: 30 * 24 * 60 * 60 * 1000, // 30 days (increased from 7)
+  // Storage key retained so existing installs keep their warm cache across the
+  // provider change. Translations are provider-agnostic strings.
   storageKey: 'azure_translation_cache',
 };
 
@@ -1170,7 +1165,7 @@ class TranslationService {
   }
 
   /**
-   * Translate text using Azure Translator
+   * Translate text via the ai-translate edge function
    * NON-BLOCKING: If service isn't initialized, returns cached/original text immediately
    */
   async translateText(
@@ -1218,8 +1213,8 @@ class TranslationService {
     }
 
     try {
-      // Call Azure Translator API
-      const translatedText = await this.callAzureTranslator(text, targetLanguage, sourceLanguage);
+      // Call the translation proxy
+      const translatedText = await this.callTranslateProxy(text, targetLanguage, sourceLanguage);
 
       // Cache the result
       this.setCachedTranslation(text, targetLanguage, translatedText);
@@ -1229,7 +1224,7 @@ class TranslationService {
         translatedText,
         sourceLanguage,
         targetLanguage,
-        confidence: 0.9, // High confidence for Azure translations
+        confidence: 0.9, // Machine-translation confidence (provider returns none)
       };
     } catch (error) {
       console.error('Translation failed:', error);
@@ -1246,47 +1241,29 @@ class TranslationService {
   }
 
   /**
-   * Call Azure Translator API
+   * Translate a single string via the ai-translate edge function.
+   *
+   * Sent as a one-element batch because the proxy exposes a single batching
+   * action; there is no per-call overhead difference.
    */
-  private async callAzureTranslator(
+  private async callTranslateProxy(
     text: string,
     targetLanguage: SupportedLanguage,
     sourceLanguage: SupportedLanguage = 'en'
   ): Promise<string> {
-    if (!AZURE_CONFIG.key) {
-      throw new Error('Azure Translator API key not configured');
+    const [translated] = await proxyTranslate([text], targetLanguage, sourceLanguage);
+
+    if (typeof translated !== 'string') {
+      throw new Error('Invalid response from translation service');
     }
 
-    const url = `${AZURE_CONFIG.endpoint}/translate?api-version=3.0&from=${sourceLanguage}&to=${targetLanguage}`;
-
-    const response = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: {
-        'Ocp-Apim-Subscription-Key': AZURE_CONFIG.key,
-        'Ocp-Apim-Subscription-Region': AZURE_CONFIG.region,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify([{ text }]),
-    }, 10000);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Azure Translator API error: ${response.status} - ${errorText}`);
-    }
-
-    const result = await response.json();
-
-    if (!result || !result[0] || !result[0].translations || !result[0].translations[0]) {
-      throw new Error('Invalid response from Azure Translator API');
-    }
-
-    return result[0].translations[0].text;
+    return translated;
   }
 
   /**
    * Translate multiple texts in a SINGLE batch API call (optimized)
    * This is much faster than calling translateText individually
-   * Uses a single Azure API request for all uncached texts
+   * Uses a single proxy request for all uncached texts
    */
   async translateBatch(
     texts: string[],
@@ -1350,7 +1327,7 @@ class TranslationService {
 
     // Step 3: Translate uncached texts in a single batch API call
     try {
-      const batchTranslations = await this.callAzureTranslatorBatch(
+      const batchTranslations = await this.callTranslateProxyBatch(
         uncachedItems.map(item => item.text),
         targetLanguage,
         sourceLanguage
@@ -1390,47 +1367,26 @@ class TranslationService {
   }
 
   /**
-   * Call Azure Translator API with multiple texts in a single request
-   * Azure allows up to 100 texts per request (with total of 10,000 chars)
+   * Translate multiple texts via the ai-translate edge function.
+   *
+   * The 100-per-request chunking is retained because it is now the proxy's own
+   * documented limit (it was previously Azure's). AWS Translate has no
+   * synchronous batch action, so the proxy fans out server-side with bounded
+   * concurrency — which is why this still costs one round trip per 100 texts
+   * rather than one per text.
    */
-  private async callAzureTranslatorBatch(
+  private async callTranslateProxyBatch(
     texts: string[],
     targetLanguage: SupportedLanguage,
     sourceLanguage: SupportedLanguage = 'en'
   ): Promise<string[]> {
-    if (!AZURE_CONFIG.key) {
-      throw new Error('Azure Translator API key not configured');
-    }
-
-    // Azure allows up to 100 texts per request
     const MAX_BATCH_SIZE = 100;
     const allTranslations: string[] = [];
 
     for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
       const batch = texts.slice(i, i + MAX_BATCH_SIZE);
-      const url = `${AZURE_CONFIG.endpoint}/translate?api-version=3.0&from=${sourceLanguage}&to=${targetLanguage}`;
-
-      const response = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': AZURE_CONFIG.key,
-          'Ocp-Apim-Subscription-Region': AZURE_CONFIG.region,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(batch.map(text => ({ text }))),
-      }, 10000);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Azure Translator API error: ${response.status} - ${errorText}`);
-      }
-
-      const results = await response.json();
-
-      for (const result of results) {
-        const translatedText = result?.translations?.[0]?.text || '';
-        allTranslations.push(translatedText);
-      }
+      const translations = await proxyTranslate(batch, targetLanguage, sourceLanguage);
+      allTranslations.push(...translations);
     }
 
     return allTranslations;
@@ -1440,35 +1396,11 @@ class TranslationService {
    * Detect language of text
    */
   async detectLanguage(text: string): Promise<{ language: string; confidence: number }> {
-    if (!AZURE_CONFIG.key) {
-      throw new Error('Azure Translator API key not configured');
-    }
-
-    const url = `${AZURE_CONFIG.endpoint}/detect?api-version=3.0`;
-
     try {
-      const response = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': AZURE_CONFIG.key,
-          'Ocp-Apim-Subscription-Region': AZURE_CONFIG.region,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([{ text }]),
-      }, 10000);
-
-      if (!response.ok) {
-        throw new Error(`Language detection failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      const detection = result[0];
-
-      return {
-        language: detection.language,
-        confidence: detection.score,
-      };
+      return await proxyDetectLanguage(text);
     } catch (error) {
+      // Preserved behaviour: detection failures degrade to English rather than
+      // propagating, because callers treat this as a hint, not a decision.
       console.error('Language detection error:', error);
       return {
         language: 'en',

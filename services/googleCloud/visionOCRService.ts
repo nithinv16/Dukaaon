@@ -18,7 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
 import { Alert } from 'react-native';
-import { GOOGLE_CLOUD_CONFIG } from '../../config/googleCloud';
+import { proxyOcr } from '../ai/aiProxyClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translationService } from '../translationService';
 
@@ -40,40 +40,20 @@ interface OCRResultWithTranslation extends OCRResult {
   needsTranslation?: boolean;
 }
 
-interface VisionAPIResponse {
-  responses: Array<{
-    textAnnotations?: Array<{
-      description: string;
-      boundingPoly?: {
-        vertices: Array<{ x: number; y: number }>;
-      };
-    }>;
-    fullTextAnnotation?: {
-      text: string;
-      pages?: Array<{
-        property?: {
-          detectedLanguages?: Array<{
-            languageCode: string;
-            confidence: number;
-          }>;
-        };
-      }>;
-    };
-    error?: {
-      code: number;
-      message: string;
-    };
-  }>;
-}
 
+/**
+ * OCR via the `ai-ocr` edge function (AWS Textract).
+ *
+ * The class name is retained because six modules import it. It no longer talks
+ * to Google Cloud Vision: the API key came from EXPO_PUBLIC_GOOGLE_CLOUD_API_KEY
+ * and was embedded directly in the request URL, so it was inlined into the JS
+ * bundle and recoverable from any shipped APK.
+ */
 export class GoogleCloudVisionOCRService {
   private static instance: GoogleCloudVisionOCRService;
-  private apiKey: string;
-  private apiUrl: string;
 
   private constructor() {
-    this.apiKey = GOOGLE_CLOUD_CONFIG.apiKey;
-    this.apiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${this.apiKey}`;
+    // No provider configuration: credentials live in the ai-ocr edge function.
   }
 
   public static getInstance(): GoogleCloudVisionOCRService {
@@ -247,57 +227,25 @@ export class GoogleCloudVisionOCRService {
    */
   public async extractTextFromBase64(
     base64Image: string,
-    languageHints: string[] = []
+    _languageHints: string[] = []
   ): Promise<OCRResult[]> {
     try {
-      const features = [
-        {
-          type: 'TEXT_DETECTION',
-          maxResults: GOOGLE_CLOUD_CONFIG.maxResults || 50,
-        },
-      ];
+      const result = await proxyOcr(base64Image);
 
-      // Add DOCUMENT_TEXT_DETECTION for better language detection and structure
-      if (GOOGLE_CLOUD_CONFIG.enableDocumentTextDetection) {
-        features.push({
-          type: 'DOCUMENT_TEXT_DETECTION',
-          maxResults: 1,
-        });
-      }
-
-      const requestBody: any = {
-        requests: [
-          {
-            image: {
-              content: base64Image,
-            },
-            features: features,
-          },
-        ],
-      };
-
-      // Only add language hints if provided, otherwise let Google auto-detect
-      if (languageHints.length > 0) {
-        requestBody.requests[0].imageContext = {
-          languageHints: languageHints,
-        };
-      }
-
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API request failed: ${response.status} - ${errorText}`);
-      }
-
-      const data: VisionAPIResponse = await response.json();
-      return await this.parseVisionAPIResponse(data);
+      // Textract returns per-line blocks with a confidence score, which maps
+      // directly onto the OCRResult shape callers already consume.
+      //
+      // `languageHints` is accepted and ignored: Vision took hints to bias
+      // recognition, Textract has no equivalent parameter. Language detection is
+      // handled separately via translationService.detectLanguage, which now goes
+      // through Comprehend.
+      //
+      // Bounding boxes are not populated. Textract does return Geometry, but the
+      // proxy does not forward it and no caller in this app reads boundingBox.
+      return result.lines.map((line) => ({
+        text: line.text,
+        confidence: line.confidence,
+      }));
     } catch (error) {
       console.error('Error extracting text from base64:', error);
       throw error;
@@ -337,142 +285,6 @@ export class GoogleCloudVisionOCRService {
     } catch (error) {
       console.error('Error getting app language:', error);
       return 'en';
-    }
-  }
-
-  /**
-   * Parse Google Cloud Vision API response with hybrid language detection
-   * Uses app language as primary and Google Cloud Vision detection as fallback
-   */
-  private async parseVisionAPIResponse(response: VisionAPIResponse): Promise<OCRResult[]> {
-    try {
-      const results: OCRResult[] = [];
-      
-      if (!response.responses || response.responses.length === 0) {
-        return results;
-      }
-
-      const firstResponse = response.responses[0];
-      
-      // Check for API errors
-      if (firstResponse.error) {
-        throw new Error(`Vision API Error: ${firstResponse.error.message}`);
-      }
-
-      // Hybrid language detection: Use app language as primary, Google Cloud Vision as fallback
-      const appLanguage = await this.getCurrentAppLanguage();
-      let finalLanguage = appLanguage;
-      let detectionMethod = 'app_primary';
-      
-      // Extract Google Cloud Vision detected language for fallback
-      let visionDetectedLanguage: string | undefined;
-      let highestConfidence = 0;
-      
-      if (firstResponse.fullTextAnnotation) {
-        console.log('Full text detected:', firstResponse.fullTextAnnotation.text);
-        
-        // Extract the most confident detected language from Vision API
-        if (firstResponse.fullTextAnnotation.pages) {
-          firstResponse.fullTextAnnotation.pages.forEach((page, pageIndex) => {
-            if (page.property?.detectedLanguages) {
-              console.log(`Page ${pageIndex + 1} detected languages:`);
-              page.property.detectedLanguages.forEach(lang => {
-                console.log(`  - ${lang.languageCode}: ${(lang.confidence * 100).toFixed(1)}% confidence`);
-                if (lang.confidence > highestConfidence) {
-                  highestConfidence = lang.confidence;
-                  visionDetectedLanguage = lang.languageCode;
-                }
-              });
-            }
-          });
-        }
-      }
-
-      // Decision logic for language detection - prioritize Vision API for regional languages
-      if (visionDetectedLanguage && highestConfidence > 0.7) {
-        // Check if app language is just the default fallback
-        const isAppLanguageDefault = appLanguage === 'en';
-        
-        if (appLanguage !== visionDetectedLanguage) {
-          console.log(`Language mismatch detected:`);
-          console.log(`  - App language: ${appLanguage} (default: ${isAppLanguageDefault})`);
-          console.log(`  - Vision detected: ${visionDetectedLanguage} (${(highestConfidence * 100).toFixed(1)}% confidence)`);
-          
-          // Use Vision API detection if:
-          // 1. Very high confidence (>90%), OR
-          // 2. Good confidence (>70%) AND app language is default English
-          if (highestConfidence > 0.9 || (highestConfidence > 0.7 && isAppLanguageDefault)) {
-            finalLanguage = visionDetectedLanguage;
-            detectionMethod = 'vision_override';
-            console.log(`Using Vision API language: ${visionDetectedLanguage} (${(highestConfidence * 100).toFixed(1)}% confidence)`);
-          } else {
-            console.log(`Keeping app language ${appLanguage} as primary choice`);
-          }
-        } else {
-          console.log(`App language ${appLanguage} confirmed by Vision API (${(highestConfidence * 100).toFixed(1)}% confidence)`);
-          detectionMethod = 'app_confirmed';
-        }
-      } else {
-        console.log(`Using app language ${appLanguage} (Vision API confidence too low or no detection)`);
-      }
-      
-      console.log(`Final language decision: ${finalLanguage} (method: ${detectionMethod})`);
-
-      // Use fullTextAnnotation if available (preferred for complete text)
-      if (firstResponse.fullTextAnnotation && firstResponse.fullTextAnnotation.text) {
-        const rawText = firstResponse.fullTextAnnotation.text;
-        const cleanedText = this.cleanExtractedText(rawText);
-        
-        console.log('Raw OCR text:', JSON.stringify(rawText));
-        console.log('Cleaned OCR text:', JSON.stringify(cleanedText));
-        
-        results.push({
-            text: cleanedText,
-            confidence: 0.9,
-            detectedLanguage: finalLanguage,
-            boundingBox: undefined, // Full text doesn't have specific bounding box
-          });
-      } else if (firstResponse.textAnnotations && firstResponse.textAnnotations.length > 0) {
-        // Fallback to first text annotation only (contains full text)
-        const firstAnnotation = firstResponse.textAnnotations[0];
-        if (firstAnnotation.description) {
-          const rawText = firstAnnotation.description;
-          const cleanedText = this.cleanExtractedText(rawText);
-          
-          console.log('Raw OCR text (fallback):', JSON.stringify(rawText));
-          console.log('Cleaned OCR text (fallback):', JSON.stringify(cleanedText));
-          
-          let boundingBox;
-          if (firstAnnotation.boundingPoly && firstAnnotation.boundingPoly.vertices) {
-            const vertices = firstAnnotation.boundingPoly.vertices;
-            if (vertices.length >= 4) {
-              const minX = Math.min(...vertices.map(v => v.x || 0));
-              const minY = Math.min(...vertices.map(v => v.y || 0));
-              const maxX = Math.max(...vertices.map(v => v.x || 0));
-              const maxY = Math.max(...vertices.map(v => v.y || 0));
-              
-              boundingBox = {
-                x: minX,
-                y: minY,
-                width: maxX - minX,
-                height: maxY - minY,
-              };
-            }
-          }
-
-          results.push({
-            text: cleanedText,
-            confidence: 0.9,
-            detectedLanguage: finalLanguage,
-            boundingBox,
-          });
-        }
-      }
-
-      return results;
-    } catch (error) {
-      console.error('Error parsing Vision API response:', error);
-      throw error;
     }
   }
 
@@ -713,7 +525,9 @@ export class GoogleCloudVisionOCRService {
    * Get supported languages
    */
   public getSupportedLanguages(): { [key: string]: string } {
-    return GOOGLE_CLOUD_CONFIG.supportedLanguages || {
+    // Inlined from the former GOOGLE_CLOUD_CONFIG.supportedLanguages, which was
+    // only ever a static map — it never came from the provider.
+    return {
       'en': 'English',
       'hi': 'Hindi',
       'te': 'Telugu',

@@ -4,6 +4,7 @@ import { supabase } from '../supabase/supabase';
 import { useCartStore } from '../../store/cart';
 import { enhancedContextService, EnhancedUserContext } from './enhancedContextService';
 import { conversationContextManager } from './conversationContextManager';
+import { proxyChat, AiProxyError } from '../ai/aiProxyClient';
 
 // Image content for vision-enabled messages
 export interface ImageContent {
@@ -377,55 +378,50 @@ If you're unsure about any product or quantity, please indicate that so we can c
     }
   }
 
-  // Invoke AWS Bedrock model using AWS SDK (@aws-sdk/client-bedrock-runtime)
+  /**
+   * Invoke Claude through the `ai-chat` edge function.
+   *
+   * This used to construct a BedrockRuntimeClient in the app with
+   * EXPO_PUBLIC_AWS_ACCESS_KEY_ID / EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY. Metro
+   * inlines those as string literals, so a long-lived IAM credential valid
+   * against the entire AWS account was recoverable from any shipped APK. The
+   * credentials now exist only in the edge function's environment.
+   *
+   * Returns the raw Claude response shape so `parseBedrockResponse` — including
+   * its `tool_use` handling — continues to work unchanged. `modelId`,
+   * `anthropic_version` and the token ceiling are now decided server-side.
+   */
   private async invokeBedrockModel(payload: any): Promise<any> {
-    const { BEDROCK_CONFIG, AWS_CONFIG } = await import('../../config/awsBedrock');
-    const { BedrockRuntimeClient, InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
-
     try {
-      const accessKeyId = AWS_CONFIG.credentials.accessKeyId || process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || '';
-      const secretAccessKey = AWS_CONFIG.credentials.secretAccessKey || process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || '';
-      const region = AWS_CONFIG.region || process.env.EXPO_PUBLIC_AWS_REGION || 'us-east-1';
+      const result = await proxyChat({
+        messages: payload.messages,
+        system: payload.system,
+        tools: payload.tools,
+        maxTokens: payload.max_tokens,
+        temperature: payload.temperature,
+      });
 
-      console.log('[Bedrock] Access Key ID:', accessKeyId ? accessKeyId.substring(0, 8) + '...' : 'NOT SET');
-      console.log('[Bedrock] Secret Key:', secretAccessKey ? 'SET (hidden)' : 'NOT FOUND');
+      // Reassemble the Bedrock/Anthropic response envelope the parser expects.
+      return {
+        content: result.content,
+        stop_reason: result.stopReason,
+        usage: {
+          input_tokens: result.usage.inputTokens,
+          output_tokens: result.usage.outputTokens,
+        },
+      };
+    } catch (error: any) {
+      console.error('[Bedrock] AI proxy invocation failed:', error);
 
-      if (!accessKeyId || !secretAccessKey) {
-        throw new Error('AWS credentials not found');
+      // Surface quota exhaustion distinctly — it is transient and retryable,
+      // unlike a malformed request or a provider outage.
+      if (error instanceof AiProxyError && error.code === 'RATE_LIMITED') {
+        const wait = error.retryAfterSeconds ?? 60;
+        throw new Error(
+          `AI request limit reached. Please try again in ${wait} second${wait === 1 ? '' : 's'}.`
+        );
       }
 
-      console.log('[Bedrock] Initializing client with region:', region);
-      console.log('[Bedrock] Using model:', BEDROCK_CONFIG.modelId);
-
-      // Initialize the Bedrock client with IAM credentials
-      const bedrockClient = new BedrockRuntimeClient({
-        region: region,
-        credentials: {
-          accessKeyId: accessKeyId,
-          secretAccessKey: secretAccessKey,
-        },
-      });
-
-      // Invoke the model using InvokeModelCommand
-      const command = new InvokeModelCommand({
-        modelId: BEDROCK_CONFIG.modelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify(payload),
-      });
-
-      console.log('[Bedrock] Sending request...');
-      const response = await bedrockClient.send(command);
-
-      // Parse the response body
-      const responseBody = new TextDecoder().decode(response.body);
-      const result = JSON.parse(responseBody);
-
-      console.log('[Bedrock] Response received successfully');
-      return result;
-    } catch (error: any) {
-      console.error('[Bedrock] AWS Bedrock invocation failed:', error);
-      // No fallback - throw the error directly
       throw new Error(`AI Service Error: ${error.message}`);
     }
   }
