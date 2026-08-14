@@ -1,5 +1,5 @@
 {
-  "total": 289,
+  "total": 288,
   "recordedAt": "2026-08-14",
   "note": "Pre-existing TypeScript error backlog. This number must never increase. Lower it as errors are fixed by re-running with --update.",
   "topFiles": {

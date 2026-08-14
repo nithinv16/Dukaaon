@@ -77,7 +77,15 @@ BEGIN
     authkey_response jsonb;
     http_request_result record;
     authkey_url text := 'https://api.authkey.io/request';
-    authkey_key text := '904251f34754cedc';
+    -- Do NOT hardcode the key here. This previously embedded a live AuthKey
+    -- credential, which meant the secret lived in a file anyone could read and
+    -- was pasted into the database on every apply.
+    --
+    -- SUPERSEDED: the live OTP path is the `sms-hook` Edge Function
+    -- (supabase/functions/sms-hook), which reads AUTHKEY from function secrets and
+    -- fails closed when it is absent. Prefer that. If this pg-based variant is
+    -- ever revived, read the key from a Vault secret rather than inlining it.
+    authkey_key text := current_setting('app.authkey_api_key', true);
     clean_phone text;
   BEGIN
     -- Clean phone number (remove +91 prefix for AuthKey API)

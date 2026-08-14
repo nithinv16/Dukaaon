@@ -20,13 +20,13 @@ down incrementally.
 
 | Metric | At Phase 1 start | Now | Delta |
 |--------|------------------|-----|-------|
-| Typecheck errors | 525 | **289** | −236 (−45%) |
+| Typecheck errors | 525 | **288** | −237 (−45%) |
 | Jest suites | 9 failed / 48 passed (57) | 9 failed / 50 passed (59) | +2 suites passing |
 | Jest tests | 8 failed / 735 passed (753) | 31 failed / 767 passed (808) | +32 passing, +55 total |
 | Repo size (excl. node_modules/.git) | 63 MB | 38 MB | −25 MB |
 
 The typecheck count is enforced by `scripts/check-typecheck-baseline.js` against
-`scripts/typecheck-baseline.json`. The gate fails on any increase and prints the
+`scripts/typecheck-baseline.json` (288). The gate fails on any increase and prints the
 ratchet command on any decrease, so the number cannot silently drift back up.
 
 ### On the rise in failing tests (8 → 31)
@@ -49,7 +49,7 @@ specification for work that is still open:
 Verified when Phase 1 landed: 30 failed / 67 passed → 28 failed / 69 passed
 across `tests/config` + `tests/security`, with zero new failures.
 
-## Typecheck backlog (289)
+## Typecheck backlog (288)
 
 Concentrated in a few files, and dominated by two structural causes rather than
 many independent mistakes:

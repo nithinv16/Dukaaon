@@ -710,7 +710,7 @@ Detailed Flow:
 **Purpose:** Intercepts Supabase auth OTP requests and sends SMS via AuthKey.io
 
 **Configuration:**
-- **AuthKey ID:** 904251f34754cedc
+- **AuthKey ID:** <your-authkey-api-key>
 - **Template ID:** 24603 (DLT registered)
 - **Sender ID:** AUTHKY
 - **API Endpoint:** https://api.authkey.io/request
@@ -735,7 +735,7 @@ This sms sent by authkey.io
 
 **Environment Variables:**
 ```env
-AUTHKEY=904251f34754cedc
+AUTHKEY=<your-authkey-api-key>
 SEND_SMS_HOOK_SECRETS=<webhook_secret>
 ```
 

@@ -88,10 +88,10 @@ Deno.serve(async (req) => {
 
     // WhatsApp OTP via AuthKey.io - Official POST API
     //
-    // Fail closed rather than falling back to a hardcoded key. The previous
-    // `|| '904251f34754cedc'` meant a deploy with AUTHKEY unset would silently
-    // authenticate against a credential committed to this repository, and it kept
-    // that credential in source where it did not belong.
+    // Fail closed rather than falling back to a hardcoded key. This previously
+    // read `Deno.env.get('AUTHKEY') || '<literal key>'`, so a deploy with AUTHKEY
+    // unset would silently authenticate against a credential committed to this
+    // repository — and it kept that credential in source, where it did not belong.
     const authKey = Deno.env.get('AUTHKEY');
     if (!authKey) {
       console.error('AUTHKEY is not configured — cannot deliver OTP');

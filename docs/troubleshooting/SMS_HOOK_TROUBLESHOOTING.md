@@ -100,7 +100,7 @@ SMS sent successfully
 #### Issue 3: AuthKey API Error
 **Cause**: Incorrect API key or request format
 **Solution**:
-- Verify AuthKey API key: `904251f34754cedc`
+- Verify AuthKey API key: `<your-authkey-api-key>`
 - Check DLT template ID: `24603`
 - Ensure sender ID: `AUTHKY`
 
@@ -115,7 +115,7 @@ SMS sent successfully
 Optional environment variables for the Edge Function:
 ```bash
 # AuthKey API Key (fallback to hardcoded if not set)
-supabase secrets set AUTHKEY=904251f34754cedc
+supabase secrets set AUTHKEY=<your-authkey-api-key>
 
 # Webhook secret for signature verification
 supabase secrets set SEND_SMS_HOOK_SECRETS=your_webhook_secret
