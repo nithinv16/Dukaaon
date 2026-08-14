@@ -20,23 +20,16 @@
     "contexts/**/*",
     "providers/**/*",
     "utils/**/*",
-    "lib/**/*",
     "config/**/*",
     "constants/**/*",
     "types/**/*",
-    "theme/**/*",
-    "navigator/**/*"
+    "theme/**/*"
   ],
   "exclude": [
     "node_modules",
     "supabase/functions",
     "tests",
     "scripts",
-    "DukaaOnWebsite",
-    "Website",
-    "old-website-backup",
-    "src",
-    "screens",
     "android",
     "patched-modules",
     "polyfills"
