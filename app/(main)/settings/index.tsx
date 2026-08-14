@@ -14,7 +14,12 @@ export default function Settings() {
   const user = useAuthStore(state => state.user);
   const { insets } = useEdgeToEdge({ statusBarStyle: 'dark' });
   const { currentLanguage } = useLanguage();
-  const [translations, setTranslations] = useState({});
+  // Typed as a string map rather than inferred as `{}`. Every read below is of the
+  // form `translations.someKey || 'Fallback'`, which produced 61 TS2339 errors
+  // against the inferred empty-object type. The keys are dynamic (they come from
+  // originalTexts and from the translation service), so a string index signature
+  // is the accurate type here, not a fixed interface.
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const {
     notificationsEnabled,
     orderUpdatesEnabled,

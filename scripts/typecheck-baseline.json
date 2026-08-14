@@ -1,0 +1,22 @@
+{
+  "total": 289,
+  "recordedAt": "2026-08-14",
+  "note": "Pre-existing TypeScript error backlog. This number must never increase. Lower it as errors are fixed by re-running with --update.",
+  "topFiles": {
+    "services/aiAgent/bedrockAIService.ts": 60,
+    "app/(main)/stock/index.tsx": 23,
+    "app/(main)/wholesaler/customers/analytics.tsx": 23,
+    "components/common/OCRScanner.tsx": 13,
+    "services/auth/linkExistingProfile.ts": 9,
+    "app/(main)/phone-order/index.tsx": 8,
+    "app/(main)/profile/_layout.tsx": 8,
+    "app/(main)/profile/user-profile.tsx": 8,
+    "services/aiAgent/enhancedContextService.ts": 8,
+    "services/aiAgent/reactNativeAIService.ts": 8,
+    "hooks/useTranslation.ts": 6,
+    "app/(main)/wholesaler/customers/index.tsx": 5,
+    "app/(main)/wholesaler/customers/details.tsx": 4,
+    "components/ai/AIRecommendations.tsx": 4,
+    "components/home/Header.tsx": 4
+  }
+}

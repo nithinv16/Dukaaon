@@ -112,7 +112,6 @@ export default function Loans() {
     inventoryTurnoverDaysRequired: 'Inventory turnover days is required',
     requestedAmount: 'Requested Loan Amount (₹)',
     requestedAmountRequired: 'Requested loan amount is required',
-    tenureMonths: 'Tenure (Months)',
     tenureMonthsRequired: 'Tenure is required',
     repaymentFrequency: 'Repayment Frequency',
     daily: 'Daily',

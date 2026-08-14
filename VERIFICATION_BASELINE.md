@@ -1,47 +1,102 @@
 # Verification Gate Baseline
 
-Recorded as part of clause 2.22. All four non-watch verification commands terminate on their own with a verdict. The errors below are pre-existing and unrelated to the security fixes; the intent is to burn them down incrementally.
+The repository carries a pre-existing error backlog that predates the security
+work. The point of these baselines is not to be green today — it is to make
+regressions *detectable*, so new code has to be clean while the backlog is burned
+down incrementally.
 
-## Commands and Results (as of this baseline)
+## Commands
 
-| Command | Exit Code | Result |
-|---------|-----------|--------|
-| `npm test` | 1 | 57 suites (9 failed, 48 passed), 753 tests (8 failed, 10 skipped, 735 passed) |
-| `npm run typecheck` | 1 | 525 TypeScript errors |
-| `npm run lint` | 1 | 842 problems (76 errors, 766 warnings) |
-| `npm run test:watch` | N/A | Watch mode (intentionally non-terminating, not part of gate) |
+| Command | Purpose |
+|---------|---------|
+| `npm run typecheck` | Raw `tsc --noEmit`. Reports the full backlog. |
+| `npm run typecheck:gate` | **The gate.** Fails only if the error count increases. |
+| `npm run typecheck:baseline` | Ratchets the baseline down after fixes land. |
+| `npm test` | Jest, single run. |
+| `npm run verify` | `typecheck:gate && test`. |
+| `npm run lint` | ESLint. |
 
-## Typecheck Errors (525)
+## Current state
 
-Pre-existing errors dominated by:
-- Missing type exports / incorrect imports across services and components
-- Implicit `any` types from untyped dependencies
-- Module resolution failures for some service files
-- `@sentry/react-native` API changes (Severity export removed)
-- Type mismatches in AI, payment, and order service layers
+| Metric | At Phase 1 start | Now | Delta |
+|--------|------------------|-----|-------|
+| Typecheck errors | 525 | **289** | −236 (−45%) |
+| Jest suites | 9 failed / 48 passed (57) | 9 failed / 50 passed (59) | +2 suites passing |
+| Jest tests | 8 failed / 735 passed (753) | 31 failed / 767 passed (808) | +32 passing, +55 total |
+| Repo size (excl. node_modules/.git) | 63 MB | 38 MB | −25 MB |
 
-These are NOT masked with `// @ts-nocheck`. The `tsconfig.json` scope is narrowed to app code only (`supabase/functions` excluded as Deno, `tests/` excluded to keep the gate fast).
+The typecheck count is enforced by `scripts/check-typecheck-baseline.js` against
+`scripts/typecheck-baseline.json`. The gate fails on any increase and prints the
+ratchet command on any decrease, so the number cannot silently drift back up.
 
-## Lint Errors (842 problems: 76 errors, 766 warnings)
+### On the rise in failing tests (8 → 31)
 
-Most frequent categories:
-- `@typescript-eslint/no-unused-vars` — unused variables/imports
-- `@typescript-eslint/array-type` — style preference (Array<T> vs T[])
-- `import/no-unresolved` — some module paths not resolvable by eslint
-- `import/export` — duplicate exports in type declaration files
-- `react/display-name` — anonymous component definitions
-- `react-hooks/exhaustive-deps` — missing hook dependencies
+This is not a regression in application code. The security work *added* test
+suites — the bug-condition suites under `tests/security/` and `tests/payments/`
+are written to fail against unfixed code, by design, and they are the
+specification for work that is still open:
 
-79 warnings are auto-fixable with `--fix`.
+- `anonPrivilege.bugCondition.test.ts` asserts that the legacy files under `sql/`
+  no longer contain `GRANT EXECUTE ... TO anon` for profile-mutating functions.
+  The applied migration `20250712000002_revoke_unnecessary_anon_grants.sql`
+  revokes those grants in the database, but the loose `sql/` scratch files still
+  carry them. That is Phase 3 cleanup.
+- `razorpaySecretInBuildArtifacts.bugCondition.test.ts` greps a built bundle. The
+  `.probe-export*` directories it inspects were deleted (they contained the
+  leaked secret in plaintext); the test documents the `npx expo export` commands
+  that regenerate them.
 
-## Test Failures (9 suites, 8 tests)
+Verified when Phase 1 landed: 30 failed / 67 passed → 28 failed / 69 passed
+across `tests/config` + `tests/security`, with zero new failures.
 
-Failing suites are pre-existing and relate to:
-- Missing module mocks (`services/supabase/client`)
-- Speech SDK import issues in test environment
-- Empty test files (`tests/integration/test.tsx`)
-- Module resolution for services moved/renamed
+## Typecheck backlog (289)
 
-## Burn-down Intent
+Concentrated in a few files, and dominated by two structural causes rather than
+many independent mistakes:
 
-These baselines should be reduced over time. No new code should introduce additional errors. The gate's purpose is to terminate with a verdict so regressions are detectable, not to be green today.
+| File | Errors | Cause |
+|------|--------|-------|
+| `services/aiAgent/bedrockAIService.ts` | 60 | Supabase join results typed as arrays where the code reads a single row; plus `catch (error)` being `unknown` under `strict`. |
+| `app/(main)/stock/index.tsx` | 23 | Nullable `user` reads, dynamic string indexing of a translation map. |
+| `app/(main)/wholesaler/customers/analytics.tsx` | 23 | Same Supabase join-shape issue, plus implicit-`any` accumulators. |
+| `components/common/OCRScanner.tsx` | 13 | Reads `currentLanguage` off a union-typed language context that does not declare it. |
+
+These need per-case judgment in live features (AI ordering, stock sharing,
+customer analytics, OCR), so they are deliberately left for a focused pass rather
+than bulk-edited. None are masked with `// @ts-nocheck`.
+
+### Already fixed in this pass
+
+- `app/(main)/settings/index.tsx` — 61 errors from a single `useState({})` whose
+  inferred type was `{}`. One annotation (`Record<string, string>`) cleared all 61.
+- `types/ai.ts` — 19 errors from `export default { ChatMessage, ... }` listing
+  interfaces as runtime values. Interfaces do not exist at runtime, so the object
+  was meaningless as well as invalid; removed.
+- `utils/sentry.ts` — 16 errors. Called `Sentry.*` 11 times without importing it
+  and imported `Severity`, which `@sentry/react-native` v6 does not export. Zero
+  importers; deleted. Real Sentry usage is direct, in `app/_layout.tsx`,
+  `components/ErrorBoundary.tsx`, `services/errors/ServiceError.ts` and
+  `services/logging/LoggingService.ts`.
+- `config/monitoring.ts` — 5 errors. Imported `newrelic` and
+  `@analytics/google-analytics`, neither React Native compatible. Zero importers;
+  deleted.
+- `components/ai/index.tsx` — 4 errors. Wrong relative path to `types/ai`, and a
+  default export using shorthand for names introduced by `export { default as X }`,
+  which does not create a local binding.
+- 13 `TS1117` duplicate-key errors across `stock/`, `phone-order/` and `loans/`.
+  All were silently shadowed: in an object literal the later property wins. Fixed
+  without changing what renders — see the commit for which side was kept and why.
+
+## Lint (842 problems: 76 errors, 766 warnings)
+
+Not yet gated. Dominant categories: `no-unused-vars`, `array-type` style,
+`import/no-unresolved`, `react-hooks/exhaustive-deps`. 79 warnings are
+`--fix`-able. Worth gating the same way once the count is reduced.
+
+## Not verified in this environment
+
+Neither the Deno nor the Supabase CLI is available here, so the edge functions
+under `supabase/functions/` have been syntax-checked with the TypeScript compiler
+API but **not** Deno-typechecked, served, or exercised against real AWS, AuthKey
+or Razorpay endpoints. `tsconfig.json` excludes that directory because it is Deno
+code using `jsr:` and `npm:` specifiers that `tsc` cannot resolve.

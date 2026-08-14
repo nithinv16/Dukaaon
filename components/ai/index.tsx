@@ -16,7 +16,7 @@ export type {
   VoiceOrderSession,
   ProductRecommendation,
   RecommendationsData
-} from '../types/ai';
+} from '../../types/ai';
 
 // Component props types
 export interface AIChatInterfaceProps {
@@ -265,11 +265,15 @@ export const DEFAULT_AI_CONFIG = {
   }
 };
 
-export default {
-  AIChatInterface,
-  VoiceOrderingInterface,
-  AIRecommendations,
-  aiUtils,
-  AI_CONSTANTS,
-  DEFAULT_AI_CONFIG
-};
+// No default export.
+//
+// This previously listed AIChatInterface, VoiceOrderingInterface and
+// AIRecommendations as shorthand properties. `export { default as X } from '...'`
+// re-exports a binding without introducing `X` into this module's scope, so those
+// three names did not exist here and the object was a type error. Import the named
+// exports above instead:
+//
+//   import { AIChatInterface, aiUtils, AI_CONSTANTS } from '@/components/ai';
+//
+// aiUtils, AI_CONSTANTS and DEFAULT_AI_CONFIG are already declared with
+// `export const` above, so no re-export is needed here.

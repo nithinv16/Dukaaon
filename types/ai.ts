@@ -560,25 +560,11 @@ export namespace AI {
   export type Error = AIError;
 }
 
-export default {
-  // Re-export all types for convenience
-  ChatMessage,
-  ChatConversation,
-  ChatRequest,
-  ChatResponse,
-  VoiceSearchRequest,
-  VoiceSearchResult,
-  VoiceOrderRequest,
-  VoiceOrderResponse,
-  VoiceOrderSession,
-  ProductRecommendation,
-  RecommendationsData,
-  AIFunctionCall,
-  AIFunction,
-  AIAnalyticsEvent,
-  AIAgentConfig,
-  VoiceConfig,
-  BedrockConfig,
-  AIError,
-  AIContext
-};
+// NOTE: there is deliberately no default export.
+//
+// This file previously ended with `export default { ChatMessage, ChatConversation,
+// ... }` listing every interface as though it were a value. Interfaces do not
+// exist at runtime, so that object was both a type error (19 of them) and
+// meaningless at execution time — importing it would have yielded undefined
+// properties. Every type here is already exported individually, and the `AI`
+// namespace above provides short aliases.

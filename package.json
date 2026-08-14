@@ -11,7 +11,10 @@
     "test:watch": "jest --watchAll",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx --max-warnings=0",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "typecheck:gate": "node scripts/check-typecheck-baseline.js",
+    "typecheck:baseline": "node scripts/check-typecheck-baseline.js --update",
+    "verify": "npm run typecheck:gate && npm test"
   },
   "jest": {
     "preset": "jest-expo"
