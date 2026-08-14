@@ -5,6 +5,7 @@ import { supabase } from '../services/supabase/supabase';
 import { getCurrentUser } from '../services/auth/authService';
 import { useAuthStore } from '../store/auth';
 import { subscribeToAuthChanges } from '../utils/authSync';
+import { proxyTranslate } from '../services/ai/aiProxyClient';
 
 // Language types
 export type SupportedLanguage = 'en' | 'hi' | 'ml' | 'ta' | 'te' | 'kn' | 'mr' | 'bn';
@@ -50,12 +51,8 @@ const SUPPORTED_LANGUAGES: LanguageInfo[] = [
   { code: 'bn', name: 'Bengali', localizedName: 'বাংলা', speechCode: 'bn-IN' },
 ];
 
-// Azure Translator configuration
-const AZURE_TRANSLATOR_CONFIG = {
-  key: process.env.EXPO_PUBLIC_AZURE_TRANSLATOR_KEY || 'BoAylDHkLnHj3WloBq5loZL22t2fVCd3YPwSFtIdINazL8C4IeZ0JQQJ99BIACHYHv6XJ3w3AAAAACOGnwpd',
-  region: process.env.EXPO_PUBLIC_AZURE_TRANSLATOR_REGION || 'eastus2',
-  endpoint: 'https://api.cognitive.microsofttranslator.com',
-};
+// Translation is served by the `ai-translate` edge function. No provider
+// endpoint or credential belongs in the client.
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -272,43 +269,17 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [currentLanguage, setLanguage]);
 
-  const translateWithAzure = async (text: string, targetLanguage: SupportedLanguage): Promise<string> => {
-    if (!AZURE_TRANSLATOR_CONFIG.key) {
-      throw new Error('Azure Translator key not configured');
-    }
-
-    const url = `${AZURE_TRANSLATOR_CONFIG.endpoint}/translate?api-version=3.0&to=${targetLanguage}`;
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': AZURE_TRANSLATOR_CONFIG.key,
-          'Ocp-Apim-Subscription-Region': AZURE_TRANSLATOR_CONFIG.region,
-          'Content-Type': 'application/json',
-          'X-ClientTraceId': Math.random().toString(36).substring(2, 15),
-        },
-        body: JSON.stringify([{ text }]),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Azure Translation API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-          url,
-          headers: response.headers
-        });
-        throw new Error(`Translation failed: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-
-      const result = await response.json();
-      return result[0]?.translations[0]?.text || text;
-    } catch (error) {
-      console.error('Azure Translation Error Details:', error);
-      throw error;
-    }
+  /**
+   * Translate via the ai-translate edge function (AWS Translate).
+   *
+   * This was a second, duplicate Azure Translator implementation living inside a
+   * provider that wraps the entire app — with the same live subscription key
+   * hardcoded as a fallback that services/translationService.ts had. Both are now
+   * behind the proxy, so no translation credential exists in the client.
+   */
+  const translateRemote = async (text: string, targetLanguage: SupportedLanguage): Promise<string> => {
+    const [translated] = await proxyTranslate([text], targetLanguage);
+    return translated || text;
   };
 
   const translate = useCallback(async (text: string, targetLanguage?: SupportedLanguage): Promise<string> => {
@@ -330,8 +301,8 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
 
     try {
-      // Translate using Azure
-      const translatedText = await translateWithAzure(text, target);
+      // Translate via the ai-translate edge function
+      const translatedText = await translateRemote(text, target);
 
       // Update cache
       const newCache = { ...translationCache };

@@ -603,87 +603,67 @@ export class MasterOrderService {
       const sellerMap = new Map(transformedSellers.map(s => [s.id, s]));
 
       if (retailerData && transformedSellers.length > 0) {
-        // Initialize Authkey service if not already
-        console.log('[MasterOrder] Authkey available:', authkeyWhatsAppService.isAvailable());
-        if (!authkeyWhatsAppService.isAvailable()) {
-          console.log('[MasterOrder] Initializing Authkey service...');
-          await authkeyWhatsAppService.initialize();
-          console.log('[MasterOrder] Authkey initialized, available:', authkeyWhatsAppService.isAvailable());
-        }
-
-        // Create maps for O(1) lookups
-        const sellerOrderMap = new Map<string, string>();
-        if (ordersResponse.orders) {
-          ordersResponse.orders.forEach(o => {
-            if (o.seller_id && o.order_number) {
-              sellerOrderMap.set(o.seller_id, o.order_number);
-            }
+        // One request for the whole order. The notify-order-whatsapp edge function
+        // resolves each seller's phone number and builds the message body from the
+        // database, so the client no longer chooses recipients or content — and no
+        // AuthKey credential is present in the app.
+        try {
+          const notifyResult = await authkeyWhatsAppService.notifyOrderSellers({
+            masterOrderId,
           });
-        }
 
-        // Send notifications to all sellers in parallel
-        await Promise.all(Object.entries(ordersBySeller).map(async ([sellerId, orderData]) => {
-          const seller = sellerMap.get(sellerId);
-          console.log(`[MasterOrder] Processing seller ${sellerId}:`, seller ? `${seller.name} (${seller.phone})` : 'not found');
+          console.log(
+            `[MasterOrder] WhatsApp: ${notifyResult.sent} sent, ${notifyResult.failed} failed`
+          );
 
-          if (seller && seller.phone) {
-            try {
-              console.log(`[MasterOrder] Sending WhatsApp to ${seller.name} at ${seller.phone}...`);
+          // Fall back to the in-app/push notification path only for the sellers
+          // WhatsApp could not reach, so a partial failure does not go unnoticed.
+          const failedSellerIds = new Set(
+            notifyResult.results.filter((r) => !r.success).map((r) => r.seller_id)
+          );
 
-              // Try Authkey WhatsApp first (primary method)
-              // Get the specific order number for this seller, fallback to master order number
-              const sellerOrderNumber = sellerOrderMap.get(sellerId) || orderNumber;
+          // No per-seller results means the function itself failed; fall back for
+          // everyone rather than silently notifying nobody.
+          const needsFallback =
+            notifyResult.results.length === 0
+              ? Object.keys(ordersBySeller)
+              : Object.keys(ordersBySeller).filter((id) => failedSellerIds.has(id));
 
-              const authkeyResult = await authkeyWhatsAppService.sendSellerOrderNotification(
-                seller.phone,
-                {
+          await Promise.all(
+            needsFallback.map(async (sellerId) => {
+              const seller = sellerMap.get(sellerId);
+              if (!seller?.phone) return;
+
+              const orderData = ordersBySeller[sellerId];
+              const sellerOrderNumber =
+                ordersResponse.orders?.find((o) => o.seller_id === sellerId)?.order_number ||
+                orderNumber;
+
+              try {
+                await NotificationService.sendSellerOrderNotification(seller.phone, {
+                  orderId: masterOrderId,
                   orderNumber: sellerOrderNumber,
-                  customerName: retailerName,
-                  customerPhone: retailerPhone,
-                  items: (orderData.items || []).map((item: any) => ({
-                    name: item.name || 'Item',
-                    quantity: item.quantity || 1,
-                    price: item.price,
-                    unit: item.unit
-                  })),
+                  retailerName: retailerName,
+                  items: orderData.items || [],
                   totalAmount: orderData.total_amount || 0,
                   deliveryAddress: `${deliveryAddress.address || ''}, ${deliveryAddress.city || ''}, ${deliveryAddress.state || ''}`.trim(),
-                  paymentMethod: paymentMethod
-                }
-              );
-
-              console.log(`[MasterOrder] Authkey result for ${seller.name}:`, authkeyResult);
-
-              if (authkeyResult.success) {
-                console.log(`[Authkey] ✅ WhatsApp notification sent to seller ${seller.name} (${seller.phone})`);
-              } else {
-                console.warn(`[Authkey] ❌ WhatsApp failed for ${seller.name}: ${authkeyResult.error}`);
-                // Fallback to existing notification service
-                await NotificationService.sendSellerOrderNotification(
-                  seller.phone,
-                  {
-                    orderId: ordersResponse.orderIds?.find((_, index) =>
-                      individualOrders[index].seller_id === sellerId
-                    ) || masterOrderId,
-                    orderNumber: sellerOrderNumber,
-                    retailerName: retailerName,
-                    items: orderData.items || [],
-                    totalAmount: orderData.total_amount || 0,
-                    deliveryAddress: `${deliveryAddress.address || ''}, ${deliveryAddress.city || ''}, ${deliveryAddress.state || ''}`.trim(),
-                    paymentMethod: paymentMethod
-                  }
+                  paymentMethod: paymentMethod,
+                });
+              } catch (fallbackError) {
+                console.warn(
+                  `[MasterOrder] Fallback notification failed for seller ${sellerId}:`,
+                  fallbackError
                 );
-                console.log(`[Fallback] Notification sent to ${seller.name} via NotificationService`);
               }
-            } catch (notificationError) {
-              console.warn(`[MasterOrder] ❌ Failed to send notification to seller ${seller.name}:`, notificationError);
-            }
-          } else {
-            console.warn(`[MasterOrder] ⚠️ Seller ${sellerId} has no phone number, skipping notification`);
-          }
-        }));
+            })
+          );
+        } catch (notificationError) {
+          // Notifications are best-effort. The order is already placed; failing
+          // here would surface an error for something the buyer cannot act on.
+          console.warn('[MasterOrder] Seller notification step failed:', notificationError);
+        }
       } else {
-        console.warn('[MasterOrder] ⚠️ Missing retailer or seller data, skipping notifications');
+        console.warn('[MasterOrder] Missing retailer or seller data, skipping notifications');
       }
 
       // 5. Create pickup locations (reuse sellerMap for O(1) lookups)

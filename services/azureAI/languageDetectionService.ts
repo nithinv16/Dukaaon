@@ -1,4 +1,3 @@
-import { AZURE_AI_CONFIG } from '../../config/azureAI';
 
 interface DetectedLanguage {
   language: string;
@@ -7,18 +6,19 @@ interface DetectedLanguage {
   script?: string;
 }
 
-interface TranslationResult {
-  translatedText: string;
-  sourceLanguage: string;
-  targetLanguage: string;
-  confidence: number;
-}
 
+/**
+ * Language detection for voice input.
+ *
+ * `detectLanguage` is entirely local — Unicode script ranges plus common-word
+ * matching — so it never needed a provider credential. The former constructor
+ * read AZURE_AI_CONFIG.translatorKey purely for `translateText`, which had no
+ * callers; that method has been removed along with the credential fields.
+ *
+ * Translation now lives in services/translationService.ts, which routes through
+ * the ai-translate edge function.
+ */
 class LanguageDetectionService {
-  private readonly endpoint: string;
-  private readonly apiKey: string;
-  private readonly region: string;
-
   // Language mappings with script detection
   private readonly languageMappings = {
     // Devanagari script
@@ -91,12 +91,6 @@ class LanguageDetectionService {
     'ur': ['ہے', 'ہیں', 'کا', 'میں', 'سے', 'کو', 'پر', 'اور', 'یا', 'نہیں', 'یہ', 'وہ', 'میں', 'تم', 'آپ'],
     'en': ['is', 'are', 'of', 'in', 'from', 'to', 'on', 'and', 'or', 'not', 'this', 'that', 'i', 'you', 'we']
   };
-
-  constructor() {
-    this.endpoint = AZURE_AI_CONFIG.translatorEndpoint || '';
-    this.apiKey = AZURE_AI_CONFIG.translatorKey || '';
-    this.region = AZURE_AI_CONFIG.speechRegion || '';
-  }
 
   /**
    * Detect language from text using script analysis and common words
@@ -181,53 +175,6 @@ class LanguageDetectionService {
   }
 
   /**
-   * Translate text using Azure Translator
-   */
-  async translateText(
-    text: string, 
-    targetLanguage: string, 
-    sourceLanguage?: string
-  ): Promise<TranslationResult> {
-    if (!this.apiKey || !this.endpoint) {
-      throw new Error('Azure Translator configuration missing');
-    }
-
-    try {
-      const url = `${this.endpoint}/translate?api-version=3.0&to=${targetLanguage}`;
-      if (sourceLanguage) {
-        url.concat(`&from=${sourceLanguage}`);
-      }
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': this.apiKey,
-          'Ocp-Apim-Subscription-Region': this.region,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([{ text }]),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Translation failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      const translation = result[0];
-
-      return {
-        translatedText: translation.translations[0].text,
-        sourceLanguage: translation.detectedLanguage?.language || sourceLanguage || 'unknown',
-        targetLanguage,
-        confidence: translation.detectedLanguage?.score || 0.8
-      };
-    } catch (error) {
-      console.error('Translation error:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Get language info by code
    */
   getLanguageInfo(languageCode: string) {
@@ -252,4 +199,4 @@ class LanguageDetectionService {
 }
 
 export default new LanguageDetectionService();
-export { DetectedLanguage, TranslationResult };
+export type { DetectedLanguage };

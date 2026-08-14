@@ -254,42 +254,23 @@ export default function Orders() {
           .single();
 
         if (orderWithSeller?.seller?.phone_number) {
-          // Import WhatsApp service
-          const { sendTemplateNotification } = await import('../../../services/whatsapp');
-
-          // Get retailer name (customer who cancelled)
-          const retailerName = user?.business_details?.shopName || 'Customer';
-
-          // Get seller name
-          const sellerName = orderWithSeller.seller.business_details?.shopName || 'Seller';
-
-          // Determine payment status
-          const paymentStatus = selectedOrder.payment_status === 'completed'
-            ? 'Paid - Refund processing'
-            : 'No payment collected';
-
-          // Send notification to seller with 5 variables
-          const result = await sendTemplateNotification(
-            'ORDER_CANCELLED_BY_RETAILER_to_seller',
-            orderWithSeller.seller.phone_number,
-            {
-              sellerName: sellerName,
-              // Use full order_number from orders table for consistency
-              orderNumber: orderWithSeller.order_number || selectedOrder.id.substring(0, 8),
-              customerName: retailerName.substring(0, 30), // Limit length
-              paymentStatus: 'Unpaid', // Keep it very simple
-              date: new Date().toLocaleDateString('en-IN')
-            },
-            {
-              userId: orderWithSeller.seller.id,
-              orderId: selectedOrder.id
-            }
+          // The notify-order-whatsapp edge function resolves the seller, order
+          // number, buyer name and payment status from the order itself. This
+          // previously passed the seller's phone number and all five template
+          // variables from the device, which would have let a modified client send
+          // this template to any number.
+          const { authkeyWhatsAppService } = await import(
+            '../../../services/whatsapp/AuthkeyWhatsAppService'
           );
 
-          if (result.success) {
+          const result = await authkeyWhatsAppService.notifyOrderCancelledByRetailer(
+            selectedOrder.id
+          );
+
+          if (result.sent > 0) {
             console.log('[Orders] WhatsApp notification sent to seller about cancellation');
           } else {
-            console.warn('[Orders] Failed to send WhatsApp notification:', result.error);
+            console.warn('[Orders] Failed to send WhatsApp cancellation notification');
           }
         }
       } catch (whatsappError) {

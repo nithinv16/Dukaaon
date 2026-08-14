@@ -85,3 +85,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/ai-chat/deno.json"
 entrypoint = "./functions/ai-chat/index.ts"
+
+[functions.notify-order-whatsapp]
+enabled = true
+verify_jwt = true
+import_map = "./functions/notify-order-whatsapp/deno.json"
+entrypoint = "./functions/notify-order-whatsapp/index.ts"

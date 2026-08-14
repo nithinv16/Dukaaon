@@ -47,21 +47,27 @@ const FORBIDDEN_CLIENT_ENV = [
   'EXPO_PUBLIC_AZURE_CLIENT_SECRET',
 ];
 
-// These are being migrated behind server-side proxy edge functions. Until that
-// migration completes they are still read by client code, so absence would break
-// features rather than protect anything — they are reported loudly instead.
-//
-// FLIP THIS to true once every service below reaches AWS through an edge
-// function and the variables have been deleted from .env / EAS secrets. At that
-// point the entries move into FORBIDDEN_CLIENT_ENV above and this list is
-// removed. Tracked as the "no provider credential in the client" work.
-const ENFORCE_MIGRATING_SECRETS = false;
+// Migration complete: every one of these now reaches its provider through a
+// Supabase Edge Function that holds the credential server-side, so their presence
+// in a client build is a regression rather than a requirement. Enforced.
+const ENFORCE_MIGRATING_SECRETS = true;
 const MIGRATING_CLIENT_ENV = [
+  // -> ai-chat / ai-translate / ai-ocr edge functions (AWS_* function secrets)
   'EXPO_PUBLIC_AWS_ACCESS_KEY_ID',
   'EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY',
   'EXPO_PUBLIC_AWS_BEDROCK_API_KEY',
-  'EXPO_PUBLIC_WHATSAPP_ACCESS_TOKEN',
+  // -> notify-order-whatsapp edge function (AUTHKEY_API_KEY function secret)
   'EXPO_PUBLIC_AUTHKEY_API_KEY',
+  'EXPO_PUBLIC_WHATSAPP_ACCESS_TOKEN',
+  // -> ai-ocr edge function (AWS Textract)
+  'EXPO_PUBLIC_GOOGLE_CLOUD_API_KEY',
+  // Azure was removed entirely in favour of AWS.
+  'EXPO_PUBLIC_AZURE_TRANSLATOR_KEY',
+  'EXPO_PUBLIC_AZURE_COMPUTER_VISION_KEY',
+  'EXPO_PUBLIC_AZURE_SPEECH_KEY',
+  'EXPO_PUBLIC_AZURE_FOUNDRY_KEY',
+  'EXPO_PUBLIC_AZURE_AI_API_KEY',
+  'EXPO_PUBLIC_AZURE_OPENAI_API_KEY',
 ];
 
 const describeLeak = (names) =>
@@ -327,13 +333,13 @@ const expoConfig = {
     eas: {
       projectId: "901fe813-2538-4174-82e8-0dec810541a4"
     },
-    // AWS Bedrock Configuration
-    awsBedrockApiKey: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY,
-    awsBedrockApiKeyName: process.env.EXPO_PUBLIC_AWS_BEDROCK_API_KEY_NAME,
-    // AWS IAM Credentials for Bedrock
-    awsAccessKeyId: process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID,
-    awsSecretAccessKey: process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY,
-    awsRegion: process.env.EXPO_PUBLIC_AWS_REGION || process.env.AWS_REGION || 'us-east-1',
+    // AWS credentials are deliberately absent.
+    //
+    // `extra` is published in the app manifest and is readable from the installed
+    // app, so putting an IAM access key or secret here leaks it just as surely as
+    // an EXPO_PUBLIC_ variable does. All AWS access now goes through the
+    // ai-translate / ai-ocr / ai-chat edge functions, which hold credentials in
+    // Supabase function secrets.
     // Supabase Configuration
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
@@ -362,11 +368,14 @@ const expoConfig = {
         language: 'en-IN'
       }
     },
-    // Razorpay Configuration
-    EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID,
-    // Authkey.io WhatsApp API Configuration
-    authkeyApiKey: process.env.EXPO_PUBLIC_AUTHKEY_API_KEY || "904251f34754cedc",
-    authkeyTemplateOrderReceived: "24468"
+    // Razorpay Configuration — key id only. The key secret lives in Supabase
+    // function secrets and is used solely by the razorpay edge functions.
+    EXPO_PUBLIC_RAZORPAY_KEY_ID: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID
+    // The AuthKey API key was removed from `extra`. It was published here with a
+    // live key as the default, so it shipped in the manifest even when the env
+    // var was unset. WhatsApp sending is now server-side in the
+    // notify-order-whatsapp edge function, which also means the client can no
+    // longer choose the recipient of a message.
   }
 };
 

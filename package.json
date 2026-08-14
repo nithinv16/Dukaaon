@@ -17,8 +17,6 @@
     "preset": "jest-expo"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.901.0",
-    "@azure/identity": "^4.11.1",
     "@babel/runtime": "^7.27.6",
     "@expo/vector-icons": "^14.1.0",
     "@react-native-async-storage/async-storage": "2.1.2",
@@ -70,8 +68,6 @@
     "expo-system-ui": "~5.0.11",
     "expo-web-browser": "~14.2.0",
     "lodash": "^4.17.21",
-    "microsoft-cognitiveservices-speech-sdk": "^1.45.0",
-    "openai": "^5.12.1",
     "os-browserify": "^0.3.0",
     "path-browserify": "^1.0.1",
     "process": "^0.11.10",

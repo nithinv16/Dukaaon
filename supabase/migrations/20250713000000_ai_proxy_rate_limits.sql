@@ -50,7 +50,10 @@ AS $$
             -- OCR is user-initiated per photo and costs materially more per call.
             ('ai-ocr',        60, 3600),
             -- Bedrock conversation turns are the most expensive per call.
-            ('ai-chat',      120, 3600)
+            ('ai-chat',      120, 3600),
+            -- Order notifications: one call per placed order. A tight ceiling also
+            -- bounds how much outbound WhatsApp a compromised account can trigger.
+            ('notify-order-whatsapp', 60, 3600)
     ) AS cfg(function_name, max_requests, window_seconds)
     WHERE cfg.function_name = p_function
 
@@ -61,7 +64,9 @@ AS $$
     SELECT 30, 3600
     WHERE NOT EXISTS (
         SELECT 1
-        FROM (VALUES ('ai-translate'), ('ai-ocr'), ('ai-chat')) AS known(function_name)
+        FROM (
+            VALUES ('ai-translate'), ('ai-ocr'), ('ai-chat'), ('notify-order-whatsapp')
+        ) AS known(function_name)
         WHERE known.function_name = p_function
     )
 

@@ -30,7 +30,6 @@ import ProductSearchResultsCard, { ProductSearchResult } from './ProductSearchRe
 import EnhancedVoiceSearch from '../common/EnhancedVoiceSearch';
 import { getNativeVoiceService } from '../../services/voice/nativeVoiceService';
 import VoiceConversationInterface from './VoiceConversationInterface';
-import VoiceLiveInterface from './VoiceLiveInterface';
 
 // Order item for image-based ordering
 interface OrderItem {
@@ -172,7 +171,6 @@ const AIChatInterface: React.FC<AIChatInterfaceProps> = ({
   const [showVoiceConversation, setShowVoiceConversation] = useState(false);
 
   // Voice Live mode - Azure real-time voice AI
-  const [showVoiceLive, setShowVoiceLive] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
@@ -1288,13 +1286,10 @@ const AIChatInterface: React.FC<AIChatInterfaceProps> = ({
           </View>
         </View>
         <View style={styles.headerRight}>
-          {/* Voice Live Button - Azure real-time voice AI */}
-          <TouchableOpacity
-            onPress={() => setShowVoiceLive(true)}
-            style={styles.historyButton}
-          >
-            <MaterialCommunityIcons name="waveform" size={20} color={COLORS.white} />
-          </TouchableOpacity>
+          {/* The Azure Voice Live entry point was removed with the Azure migration.
+              Real-time bidirectional voice needs a streaming backend, which an edge
+              function cannot host; the conversational voice button below uses the
+              device-native speech path and covers the same user intent. */}
           {/* Conversational Voice Button - Opens full voice conversation */}
           <TouchableOpacity
             onPress={() => setShowVoiceConversation(true)}
@@ -1753,22 +1748,6 @@ const AIChatInterface: React.FC<AIChatInterfaceProps> = ({
         language={currentLanguage}
       />
 
-      {/* Voice Live Interface - Azure real-time voice AI */}
-      <VoiceLiveInterface
-        userId={userId}
-        visible={showVoiceLive}
-        onClose={() => setShowVoiceLive(false)}
-        onOrderComplete={(orderId: string, items: any[]) => {
-          console.log('[AIChatInterface] Voice Live order complete:', orderId, items);
-          const completedMessage: Message = {
-            id: `ai_voicelive_order_${Date.now()}`,
-            role: 'assistant',
-            content: `Your Voice Live order #${orderId} has been placed successfully!`,
-            timestamp: new Date(),
-          };
-          setMessages(prev => [...prev, completedMessage]);
-        }}
-      />
     </View>
   );
 

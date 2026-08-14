@@ -9,9 +9,11 @@ const logger = LoggingService.createScope('SupabaseOTP');
  * Supabase OTP Service
  * Replaces Firebase OTP with Supabase Auth using configured Auth Hook (AuthKey API)
  * 
- * AuthKey API Configuration:
- * AUTHKEY=904251f34754cedc
- * Endpoint: https://xcpznnkpjgyrpbvpnvit.supabase.co/functions/v1/sms-hook
+ * Delivery is handled entirely server-side by the `sms-hook` edge function,
+ * which reads its AuthKey credential from the AUTHKEY function secret. No OTP
+ * credential exists in the client.
+ *
+ *   supabase secrets set AUTHKEY=...
  */
 
 interface OTPResult {

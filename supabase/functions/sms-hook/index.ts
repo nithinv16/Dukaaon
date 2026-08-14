@@ -87,7 +87,19 @@ Deno.serve(async (req) => {
     console.log(`Cleaned phone number: ${phone} -> ${cleanPhone}`);
 
     // WhatsApp OTP via AuthKey.io - Official POST API
-    const authKey = Deno.env.get('AUTHKEY') || '904251f34754cedc';
+    //
+    // Fail closed rather than falling back to a hardcoded key. The previous
+    // `|| '904251f34754cedc'` meant a deploy with AUTHKEY unset would silently
+    // authenticate against a credential committed to this repository, and it kept
+    // that credential in source where it did not belong.
+    const authKey = Deno.env.get('AUTHKEY');
+    if (!authKey) {
+      console.error('AUTHKEY is not configured — cannot deliver OTP');
+      return new Response(
+        JSON.stringify({ error: 'OTP delivery is not configured' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     const whatsappTemplateId = Deno.env.get('WHATSAPP_OTP_TEMPLATE_ID') || '40559';
     const authKeyApiUrl = 'https://console.authkey.io/restapi/requestjson.php';
     
@@ -102,11 +114,14 @@ Deno.serve(async (req) => {
       }
     };
 
-    console.log(`OTP token value: ${token}`);
-
-    console.log(`Sending WhatsApp OTP to: ${cleanPhone}, type: ${type}`);
-    console.log(`Template ID (wid): ${whatsappTemplateId}`);
-    console.log(`Payload:`, JSON.stringify(requestBody));
+    // The OTP itself is deliberately not logged. It was previously written out in
+    // full ("OTP token value: …") and again inside the serialised payload, which
+    // put a live authentication factor into function logs — readable by anyone
+    // with dashboard access and retained well past the code's own expiry.
+    // The phone number is masked for the same reason.
+    console.log(
+      `Sending WhatsApp OTP to: ${maskPhone(cleanPhone)}, type: ${type}, template: ${whatsappTemplateId}`
+    );
     
     // Send WhatsApp OTP via AuthKey POST API
     const waResponse = await fetch(authKeyApiUrl, {
@@ -150,3 +165,9 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+/** `98XXXXXX10` — enough to correlate a support report, not enough to identify. */
+function maskPhone(phone: string): string {
+  if (phone.length < 4) return '*'.repeat(phone.length);
+  return `${phone.slice(0, 2)}${'X'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-2)}`;
+}

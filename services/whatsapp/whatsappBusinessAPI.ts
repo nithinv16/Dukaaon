@@ -37,10 +37,26 @@ export class WhatsAppBusinessAPI {
   public isConfigured: boolean = false;
 
   constructor() {
-    this.apiUrl = process.env.EXPO_PUBLIC_WHATSAPP_API_URL || '';
-    this.accessToken = process.env.EXPO_PUBLIC_WHATSAPP_ACCESS_TOKEN || '';
-    this.phoneNumberId = process.env.EXPO_PUBLIC_WHATSAPP_PHONE_NUMBER_ID || '';
-    this.isConfigured = !!(this.apiUrl && this.accessToken && this.phoneNumberId);
+    // Deliberately unconfigured in the client.
+    //
+    // This previously read EXPO_PUBLIC_WHATSAPP_ACCESS_TOKEN, a Meta Graph API
+    // token, from the environment. Metro inlines EXPO_PUBLIC_* values into the JS
+    // bundle as string literals, so that token was recoverable from any shipped
+    // APK — and a Graph token can send messages as our business number.
+    //
+    // Every method below already guards on `isConfigured`, so leaving it false
+    // disables the Meta transport rather than failing at the call site. Order
+    // notifications go through the `notify-order-whatsapp` edge function instead,
+    // which holds its credential server-side and derives the recipient from an
+    // order the caller provably owns.
+    //
+    // To re-enable this transport, add a server-side proxy function in the shape
+    // of notify-order-whatsapp and point these methods at it. Do not reintroduce
+    // an EXPO_PUBLIC_ token.
+    this.apiUrl = '';
+    this.accessToken = '';
+    this.phoneNumberId = '';
+    this.isConfigured = false;
   }
 
   /**
