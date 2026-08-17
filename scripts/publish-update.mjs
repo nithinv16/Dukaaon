@@ -173,7 +173,7 @@ function resolveRuntimeVersion(platform) {
 
   const output = execFileSync(
     process.execPath,
-    ['node_modules/expo-updates/bin/cli.js', 'runtimeversion:resolve', '--platform', platform],
+    ['node_modules/expo-updates/bin/cli.js', 'runtimeversion:resolve', '--platform', platform, '--workflow', 'generic'],
     { encoding: 'utf8', cwd: PROJECT_ROOT, maxBuffer: 32 * 1024 * 1024 }
   );
 

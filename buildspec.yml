@@ -126,7 +126,7 @@ phases:
         # resolved runtime version into res/values/strings.xml, from app.config.js.
         # This is what makes the built binary report a runtime version that
         # published updates can match.
-        node node_modules/expo-updates/bin/cli.js configuration:syncnative --platform android
+        node node_modules/expo-updates/bin/cli.js configuration:syncnative --platform android --workflow generic
         echo "--- resulting updates configuration ---"
         grep -E "expo\.modules\.updates" android/app/src/main/AndroidManifest.xml || true
         grep -E "expo_runtime_version" android/app/src/main/res/values/strings.xml || true
@@ -135,7 +135,7 @@ phases:
         # Record the runtime version in the build log. This is the value an OTA
         # publish must target for this binary to receive updates, so it is worth
         # having permanently attached to the build.
-        node node_modules/expo-updates/bin/cli.js runtimeversion:resolve --platform android \
+        node node_modules/expo-updates/bin/cli.js runtimeversion:resolve --platform android --workflow generic \
           | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const m=s.match(/\{[\s\S]*\}$/);const j=JSON.parse(m[0]);console.log('RUNTIME_VERSION='+j.runtimeVersion);require('fs').writeFileSync('runtime-version.txt',j.runtimeVersion);})"
         cat runtime-version.txt
 
