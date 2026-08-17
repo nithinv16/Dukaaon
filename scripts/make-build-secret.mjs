@@ -83,7 +83,13 @@ function terraformOutputs() {
 
   let raw;
   try {
-    raw = execFileSync('terraform', [`-chdir=${TERRAFORM_DIR}`, 'output', '-json'], {
+    // Try tofu first (OpenTofu), fall back to terraform
+    const binary = (() => {
+      try { execFileSync('tofu', ['version'], { stdio: 'ignore' }); return 'tofu'; }
+      catch { return 'terraform'; }
+    })();
+
+    raw = execFileSync(binary, [`-chdir=${TERRAFORM_DIR}`, 'output', '-json'], {
       encoding: 'utf8',
       maxBuffer: 8 * 1024 * 1024,
     });
