@@ -1,0 +1,14 @@
+{
+  "name": "dukaaon-ota-manifest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Expo Updates v1 manifest endpoint. Deployed as a Lambda behind CloudFront.",
+  "main": "index.mjs",
+  "comment": [
+    "No dependencies on purpose. @aws-sdk/client-s3 and",
+    "@aws-sdk/client-secrets-manager are provided by the nodejs20.x Lambda",
+    "runtime, so the deployment package stays a single file and needs no bundling",
+    "step in Terraform."
+  ]
+}

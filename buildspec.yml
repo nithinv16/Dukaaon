@@ -1,0 +1,197 @@
+version: 0.2
+
+# Android release build on AWS CodeBuild.
+#
+# Replaces `eas build` for Android. Two things this buys over the EAS free tier:
+# no 45-minute build timeout (this project's Gradle build already runs ~14 minutes
+# locally, before ProGuard and per-ABI splits on slower CI hardware), and no
+# monthly build quota.
+#
+# IMPORTANT: this build does NOT run `expo prebuild`.
+#
+# The android/ directory is committed and is the source of truth. It contains
+# manual native work that prebuild cannot reproduce — notably the PluginContainer
+# interception in android/app/build.gradle that blocks com.android.library being
+# applied to the app module during autolinking, and the configurations.all block
+# that remaps com.android.support to AndroidX. Running prebuild here would
+# regenerate over both and break the build.
+#
+# What DOES need to run is `expo-updates configuration:syncnative`, which writes
+# the updates configuration from app.config.js into AndroidManifest.xml and
+# res/values/strings.xml. That is the bare-workflow equivalent of what prebuild
+# would otherwise do for updates only.
+
+env:
+  variables:
+    # Gradle needs a writable home inside the build volume for the cache to work.
+    GRADLE_USER_HOME: /codebuild/output/.gradle
+    # Matches the memory settings in the project's gradle.properties. Set here too
+    # because CodeBuild does not read that file when launching the daemon.
+    GRADLE_OPTS: >-
+      -Dorg.gradle.daemon=false
+      -Dorg.gradle.parallel=true
+      -Dfile.encoding=UTF-8
+    # Silences Expo's telemetry prompt in non-interactive environments.
+    CI: "true"
+
+  secrets-manager:
+    # One secret, several JSON keys. Fewer moving parts than a secret per value,
+    # and the whole build's inputs can be rotated atomically.
+    #
+    # Create it with the shape documented in infra/README.md. Terraform creates the
+    # container but never the contents — a secret written through Terraform ends up
+    # in state in plaintext.
+    KEYSTORE_BASE64: dukaaon-ota-production/build:keystore_base64
+    KEYSTORE_PASSWORD: dukaaon-ota-production/build:keystore_password
+    KEY_PASSWORD: dukaaon-ota-production/build:key_password
+    GOOGLE_SERVICES_JSON_BASE64: dukaaon-ota-production/build:google_services_json_base64
+
+    # Read by Gradle through resolveBuildSecret() in android/app/build.gradle and
+    # substituted into AndroidManifest.xml as a manifest placeholder. The release
+    # build fails loudly if this is empty rather than shipping a blank map.
+    GOOGLE_MAPS_API_KEY: dukaaon-ota-production/build:google_maps_api_key
+
+    # app.config.js hard-fails without these three.
+    EXPO_PUBLIC_SUPABASE_URL: dukaaon-ota-production/build:expo_public_supabase_url
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: dukaaon-ota-production/build:expo_public_supabase_anon_key
+    EXPO_PUBLIC_RAZORPAY_KEY_ID: dukaaon-ota-production/build:expo_public_razorpay_key_id
+
+    # Compiled into the binary. Every build that should be able to receive OTA
+    # updates must have this set, and it must match the published update server.
+    EXPO_UPDATE_URL: dukaaon-ota-production/build:expo_update_url
+
+    FIREBASE_API_KEY: dukaaon-ota-production/build:firebase_api_key
+
+phases:
+  install:
+    runtime-versions:
+      # AGP 8.8.2 requires JDK 17.
+      java: corretto17
+      nodejs: 20
+    commands:
+      - echo "Node $(node --version), Java $(java -version 2>&1 | head -1)"
+      - |
+        # Fail immediately if any required secret came through empty. CodeBuild
+        # silently sets an empty string for a missing JSON key, and an empty
+        # GOOGLE_MAPS_API_KEY or keystore would otherwise surface much later —
+        # or worse, produce a subtly broken artifact.
+        missing=""
+        for var in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_PASSWORD \
+                   GOOGLE_SERVICES_JSON_BASE64 GOOGLE_MAPS_API_KEY \
+                   EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY \
+                   EXPO_PUBLIC_RAZORPAY_KEY_ID EXPO_UPDATE_URL; do
+          eval "value=\${$var}"
+          if [ -z "$value" ]; then missing="$missing $var"; fi
+        done
+        if [ -n "$missing" ]; then
+          echo "FATAL: these secret values resolved empty:$missing"
+          echo "Check the JSON keys in the dukaaon-ota-production/build secret."
+          exit 1
+        fi
+        echo "All required secrets present."
+
+  pre_build:
+    commands:
+      # --- Materialise the gitignored files the build needs -------------------
+      - |
+        # google-services.json is gitignored, so CI must supply it.
+        #
+        # Note this file is ALSO a fingerprint input (reason: expoConfigExternalFile),
+        # which means its bytes participate in the runtime version. If the copy here
+        # ever differs from the one used elsewhere, the computed runtime version
+        # diverges and updates silently stop matching installed binaries.
+        echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > google-services.json
+        node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8')); console.log('google-services.json is valid JSON')"
+
+      - |
+        # Upload keystore. build.gradle looks for it at <repo>/credentials/android/.
+        mkdir -p credentials/android
+        echo "$KEYSTORE_BASE64" | base64 -d > credentials/android/dukaaon_upload_new.jks
+        # Verify before spending 15 minutes on a build that cannot be signed.
+        keytool -list -keystore credentials/android/dukaaon_upload_new.jks \
+          -storepass "$KEYSTORE_PASSWORD" -alias dukaaon_upload > /dev/null
+        echo "Keystore verified: alias dukaaon_upload opens with the supplied password."
+
+      # --- Dependencies ------------------------------------------------------
+      - npm ci
+
+      # --- Sync updates config into the native project -----------------------
+      - |
+        # Writes expo.modules.updates.* meta-data into AndroidManifest.xml and the
+        # resolved runtime version into res/values/strings.xml, from app.config.js.
+        # This is what makes the built binary report a runtime version that
+        # published updates can match.
+        node node_modules/expo-updates/bin/cli.js configuration:syncnative --platform android
+        echo "--- resulting updates configuration ---"
+        grep -E "expo\.modules\.updates" android/app/src/main/AndroidManifest.xml || true
+        grep -E "expo_runtime_version" android/app/src/main/res/values/strings.xml || true
+
+      - |
+        # Record the runtime version in the build log. This is the value an OTA
+        # publish must target for this binary to receive updates, so it is worth
+        # having permanently attached to the build.
+        node node_modules/expo-updates/bin/cli.js runtimeversion:resolve --platform android \
+          | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const m=s.match(/\{[\s\S]*\}$/);const j=JSON.parse(m[0]);console.log('RUNTIME_VERSION='+j.runtimeVersion);require('fs').writeFileSync('runtime-version.txt',j.runtimeVersion);})"
+        cat runtime-version.txt
+
+      # --- Fast checks before the slow build ---------------------------------
+      - npm run test:ota
+      - npm run typecheck:gate
+
+  build:
+    commands:
+      - |
+        cd android
+        # bundleRelease produces the AAB for Play. The release signing guard in
+        # app/build.gradle fails the build here if the keystore or either password
+        # is missing, rather than silently signing with the debug key.
+        ./gradlew :app:bundleRelease --no-daemon --stacktrace
+        cd ..
+
+  post_build:
+    commands:
+      - |
+        AAB=$(find android/app/build/outputs/bundle -name "*.aab" | head -1)
+        if [ -z "$AAB" ]; then
+          echo "FATAL: no .aab produced"
+          exit 1
+        fi
+        echo "Artifact: $AAB ($(du -h "$AAB" | cut -f1))"
+
+      - |
+        # Confirm the artifact is signed with the upload key and NOT the debug key.
+        # The guard in build.gradle should make this impossible, but verifying the
+        # actual output is cheap and this is the failure that costs a Play
+        # submission round-trip.
+        AAB=$(find android/app/build/outputs/bundle -name "*.aab" | head -1)
+        if command -v jarsigner > /dev/null; then
+          jarsigner -verify -verbose:summary "$AAB" | tail -5
+          if jarsigner -verify -certs "$AAB" 2>/dev/null | grep -qi "androiddebugkey"; then
+            echo "FATAL: artifact is signed with the DEBUG key. Refusing to publish."
+            exit 1
+          fi
+          echo "Signature check passed: not debug-signed."
+        fi
+
+      - |
+        # Remove the materialised secrets from the build volume. CodeBuild volumes
+        # are ephemeral, but artifacts and caches are not, and neither of these
+        # should ever be able to leak into either.
+        rm -f credentials/android/dukaaon_upload_new.jks
+        echo "Keystore removed from build volume."
+
+artifacts:
+  files:
+    - android/app/build/outputs/bundle/**/*.aab
+    - runtime-version.txt
+  name: dukaaon-$(date +%Y-%m-%d)-$CODEBUILD_BUILD_NUMBER
+  discard-paths: no
+
+cache:
+  paths:
+    # Gradle's dependency and wrapper caches dominate cold build time.
+    - /codebuild/output/.gradle/caches/**/*
+    - /codebuild/output/.gradle/wrapper/**/*
+    # npm cache rather than node_modules, so `npm ci` stays a clean install while
+    # still avoiding network fetches for every package.
+    - /root/.npm/**/*

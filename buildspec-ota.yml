@@ -1,0 +1,102 @@
+version: 0.2
+
+# Publish an over-the-air update.
+#
+# Separate from buildspec.yml because this is a fundamentally cheaper job: no JDK,
+# no Gradle, no Android SDK. It bundles JavaScript and uploads it, which takes
+# minutes rather than tens of minutes, and that difference is the whole point of
+# OTA. Keeping it in its own project also means an OTA publish cannot be blocked by
+# a queued native build.
+#
+# Safety: this job can change the code running on every installed device, so the
+# things that constrain it matter.
+#   - The runtime version is resolved by expo-updates, not chosen here, so an
+#     update can only ever reach binaries whose native layer matches.
+#   - Signing happens in the manifest Lambda, so the private key is never present
+#     in this environment. A compromise of this build role cannot forge an update
+#     that clients will accept.
+
+env:
+  variables:
+    CI: "true"
+
+  secrets-manager:
+    # Must be the exact URL compiled into the installed binaries.
+    EXPO_UPDATE_URL: dukaaon-ota-production/build:expo_update_url
+    GOOGLE_MAPS_API_KEY: dukaaon-ota-production/build:google_maps_api_key
+    EXPO_PUBLIC_SUPABASE_URL: dukaaon-ota-production/build:expo_public_supabase_url
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: dukaaon-ota-production/build:expo_public_supabase_anon_key
+    EXPO_PUBLIC_RAZORPAY_KEY_ID: dukaaon-ota-production/build:expo_public_razorpay_key_id
+    GOOGLE_SERVICES_JSON_BASE64: dukaaon-ota-production/build:google_services_json_base64
+    FIREBASE_API_KEY: dukaaon-ota-production/build:firebase_api_key
+
+    # Where to publish. Supplied by Terraform outputs.
+    OTA_BUCKET: dukaaon-ota-production/build:ota_bucket
+    OTA_BASE_URL: dukaaon-ota-production/build:ota_base_url
+    OTA_DISTRIBUTION_ID: dukaaon-ota-production/build:ota_distribution_id
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Node $(node --version)"
+      - |
+        missing=""
+        for var in EXPO_UPDATE_URL OTA_BUCKET OTA_BASE_URL OTA_DISTRIBUTION_ID \
+                   GOOGLE_SERVICES_JSON_BASE64 EXPO_PUBLIC_SUPABASE_URL \
+                   EXPO_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_RAZORPAY_KEY_ID; do
+          eval "value=\${$var}"
+          if [ -z "$value" ]; then missing="$missing $var"; fi
+        done
+        if [ -n "$missing" ]; then
+          echo "FATAL: these secret values resolved empty:$missing"
+          exit 1
+        fi
+
+  pre_build:
+    commands:
+      - |
+        # google-services.json is gitignored but IS a fingerprint input, so it must
+        # be present and byte-identical to what the native build used. Without it
+        # the resolved runtime version differs and the published update would target
+        # a runtime version no installed binary reports — an update that reaches
+        # nobody, with no error anywhere.
+        echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > google-services.json
+
+      - npm ci
+
+      # The manifest-construction tests are the ones that protect against shipping a
+      # malformed update, so run them before touching the bucket.
+      - npm run test:ota
+
+  build:
+    commands:
+      - |
+        # --allow-dirty is passed because CodeBuild checks out a detached commit and
+        # the base64-decoded google-services.json above makes the tree technically
+        # dirty. The commit is still exactly identified by CODEBUILD_RESOLVED_SOURCE_VERSION,
+        # which is what the dirty-tree guard exists to protect, so the guarantee is
+        # preserved by other means here.
+        node scripts/publish-update.mjs \
+          --platform android \
+          --allow-dirty \
+          --message "${PUBLISH_MESSAGE:-$CODEBUILD_RESOLVED_SOURCE_VERSION}"
+
+  post_build:
+    commands:
+      - |
+        echo "Published from commit $CODEBUILD_RESOLVED_SOURCE_VERSION"
+        echo
+        echo "Verify what clients will now be served:"
+        echo "  curl -sD - -o /dev/null '$EXPO_UPDATE_URL' \\"
+        echo "    -H 'expo-protocol-version: 1' \\"
+        echo "    -H 'expo-platform: android' \\"
+        echo "    -H 'accept: application/expo+json' \\"
+        echo "    -H \"expo-runtime-version: \$(cat runtime-version.txt 2>/dev/null || echo '<runtime-version>')\""
+        echo
+        echo "To roll back:  npm run ota:rollback"
+
+cache:
+  paths:
+    - /root/.npm/**/*
