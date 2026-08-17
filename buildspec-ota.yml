@@ -64,7 +64,7 @@ phases:
         # nobody, with no error anywhere.
         echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > google-services.json
 
-      - npm ci
+      - npm install --legacy-peer-deps
 
       # The manifest-construction tests are the ones that protect against shipping a
       # malformed update, so run them before touching the bucket.
