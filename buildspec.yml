@@ -135,8 +135,15 @@ phases:
         # Record the runtime version in the build log. This is the value an OTA
         # publish must target for this binary to receive updates, so it is worth
         # having permanently attached to the build.
-        node node_modules/expo-updates/bin/cli.js runtimeversion:resolve --platform android --workflow generic \
-          | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const m=s.match(/\{[\s\S]*\}$/);const j=JSON.parse(m[0]);console.log('RUNTIME_VERSION='+j.runtimeVersion);require('fs').writeFileSync('runtime-version.txt',j.runtimeVersion);})"
+        node -e "
+          const { execSync } = require('child_process');
+          const out = execSync('node node_modules/expo-updates/bin/cli.js runtimeversion:resolve --platform android --workflow generic', { encoding: 'utf8' });
+          console.log('Raw output:', out.slice(-200));
+          const m = out.match(/\"runtimeVersion\"\s*:\s*\"([^\"]+)\"/);
+          if (!m) { console.error('Could not extract runtimeVersion'); process.exit(1); }
+          console.log('RUNTIME_VERSION=' + m[1]);
+          require('fs').writeFileSync('runtime-version.txt', m[1]);
+        "
         cat runtime-version.txt
 
       # --- Fast checks before the slow build ---------------------------------
