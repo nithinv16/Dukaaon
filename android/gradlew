@@ -1,5 +1,12 @@
 #!/bin/sh
 
+# Fix for Android Studio not picking up the correct PATH on macOS
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+# Fix for AGP 8.3+ conflict when multiple preference roots are set (e.g. ANDROID_PREFS_ROOT and ANDROID_USER_HOME)
+# This prevents "Several environment variables and/or system properties contain different paths" error.
+unset ANDROID_PREFS_ROOT
+
 #
 # Copyright © 2015-2021 the original authors.
 #
