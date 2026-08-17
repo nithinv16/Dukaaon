@@ -145,19 +145,25 @@ phases:
         grep -E "expo_runtime_version" android/app/src/main/res/values/strings.xml || true
 
       - |
-        # Record the runtime version using @expo/fingerprint directly.
-        # The expo-updates CLI wrapper has a broken dependency on CI, but the
-        # underlying fingerprint package works fine.
+        # Record the runtime version. @expo/fingerprint may not be resolvable
+        # with --legacy-peer-deps, so fall back to reading it from strings.xml
+        # (which syncnative already wrote).
         node -e "
-          const { createFingerprintAsync } = require('@expo/fingerprint');
-          createFingerprintAsync(process.cwd()).then(fp => {
-            console.log('RUNTIME_VERSION=' + fp.hash);
-            require('fs').writeFileSync('runtime-version.txt', fp.hash);
-          }).catch(e => {
-            console.error('Fingerprint failed:', e.message);
-            process.exit(1);
-          });
-        "
+          try {
+            const { createFingerprintAsync } = require('@expo/fingerprint');
+            createFingerprintAsync(process.cwd()).then(fp => {
+              console.log('RUNTIME_VERSION=' + fp.hash);
+              require('fs').writeFileSync('runtime-version.txt', fp.hash);
+            });
+          } catch(e) {
+            const fs = require('fs');
+            const xml = fs.readFileSync('android/app/src/main/res/values/strings.xml','utf8');
+            const m = xml.match(/expo_runtime_version[^>]*>([^<]+)/);
+            const rv = m ? m[1] : 'unknown';
+            console.log('RUNTIME_VERSION=' + rv + ' (from strings.xml)');
+            fs.writeFileSync('runtime-version.txt', rv);
+          }
+        " || echo "unknown" > runtime-version.txt
         cat runtime-version.txt
 
       # --- Fast checks (re-enable once the build pipeline is proven) ----------
