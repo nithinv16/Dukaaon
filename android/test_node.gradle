@@ -1,0 +1,17 @@
+def rootDir = new File(".")
+def node = "/usr/local/bin/node"
+println "Testing with $node"
+try {
+    def result = [node, "--version"].execute(null, rootDir).text.trim()
+    println "Result: $result"
+} catch (e) {
+    println "Failed with full path: $e"
+}
+
+println "Testing with 'node'"
+try {
+    def result = ["node", "--version"].execute(null, rootDir).text.trim()
+    println "Result: $result"
+} catch (e) {
+    println "Failed with 'node': $e"
+}

@@ -21,15 +21,13 @@
       <category android:name="android.intent.category.BROWSABLE"/>
       <data android:scheme="https"/>
     </intent>
-    <!-- UPI app packages for direct app redirection -->
-    <package android:name="com.google.android.apps.nbu.paisa.user" />
-    <package android:name="com.phonepe.app" />
-    <package android:name="net.one97.paytm" />
-    <package android:name="in.org.npci.upiapp" />
-    <!-- Intent for UPI payment flow -->
     <intent>
-      <action android:name="android.intent.action.SEND" />
+      <action android:name="android.intent.action.SEND"/>
     </intent>
+    <package android:name="com.google.android.apps.nbu.paisa.user"/>
+    <package android:name="com.phonepe.app"/>
+    <package android:name="net.one97.paytm"/>
+    <package android:name="in.org.npci.upiapp"/>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:appComponentFactory="androidx.core.app.CoreComponentFactory" tools:replace="android:appComponentFactory">
     <meta-data android:name="android.app.lib_name" android:value="dukaaon"/>
@@ -37,10 +35,14 @@
     <meta-data android:name="android.window.PROPERTY_COMPAT_ALLOW_EDGE_TO_EDGE_ENFORCEMENT" android:value="true"/>
     <meta-data android:name="android.window.PROPERTY_COMPAT_ALLOW_SYSTEM_BAR_APPEARANCE_CONTROL" android:value="true"/>
     <meta-data android:name="android.window.PROPERTY_COMPAT_ALLOW_USER_ASPECT_RATIO_OVERRIDE" android:value="true"/>
-    <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyC1-SdpmUYDZagQhFkmcsgJHd2YrrdlUSM"/>
-    <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
+    <meta-data android:name="com.google.android.geo.API_KEY" android:value="${GOOGLE_MAPS_API_KEY}"/>
+    <meta-data android:name="expo.modules.updates.ENABLED" android:value="true"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="https://updates.dukaaon.in/api/manifest"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE" android:value="-----BEGIN CERTIFICATE-----&#xD;&#xA;MIIC0TCCAbmgAwIBAgIJZonTY16xlfKOMA0GCSqGSIb3DQEBCwUAMBIxEDAOBgNV&#xD;&#xA;BAMTB0R1a2Fhb24wHhcNMjYwODE1MTIwMzAxWhcNMzYwODE1MTIwMzAxWjASMRAw&#xD;&#xA;DgYDVQQDEwdEdWthYW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA&#xD;&#xA;4f+0VDpCmEHUA14AWrOQsoj6ZZOLcf1jVoYByWP5zgckoI2qr8tI3NBo1js+rEjb&#xD;&#xA;T4FKMvdWoS7m2QaHFS/jQhsPvotHCQd9/WYMGv/h290nfdRUKHBWgoNrZoWbNOhg&#xD;&#xA;BzXx+SRcz9Jesx4LxLtzfFooa0BKSXPfNpl1FmNICWJuKamFexCePWqtdg3s4uyz&#xD;&#xA;2mjmW1S69WeL9SCc72xHqmjSjD3sboBC4qQLnGF35K93i3qimnQYfBzKd2jtuLci&#xD;&#xA;RtZi1AsDY04k0sIj7R6i7fcLSRgS/CsK/hI5vyVXSxyQ0F/Huv3Tlqkg3F4vxiJu&#xD;&#xA;KvIqZL8XMbqiHrfBimCdgQIDAQABoyowKDAOBgNVHQ8BAf8EBAMCB4AwFgYDVR0l&#xD;&#xA;AQH/BAwwCgYIKwYBBQUHAwMwDQYJKoZIhvcNAQELBQADggEBADqI64DQBBF5BWP4&#xD;&#xA;a3T5BJKeT+4GNHD6zCOiMSenaxuJVGpH4t8iuFjoJQPIy9hqG3eM7Bu45Brz3/VC&#xD;&#xA;isxV8mwLSFqFeSzEoYNu0yqQdI/guIyNHUVLGnU1On2IWm3Uk87Nh2XrYKcvZUl6&#xD;&#xA;VI0fB6NSy/JOO/J9CbJeU7HN7v4kedsVCbaCKmp+BfK7Ub2+ikCPuzavvFLbC06n&#xD;&#xA;sml0UDqnMK5lpl/CwKdJEZzwilyPnpq98+gXNwbkxvPHzNFt+sqSDRO7sDGgsyh9&#xD;&#xA;GNzF3TovR272dCEDJBP3svx5iSME4DWXz04HYFwAfgiylGiw0IgD4e2pUJy7xyhF&#xD;&#xA;tbleYuc=&#xD;&#xA;-----END CERTIFICATE-----&#xD;&#xA;"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_METADATA" android:value="{&quot;keyid&quot;:&quot;main&quot;,&quot;alg&quot;:&quot;rsa-v1_5-sha256&quot;}"/>
+    <meta-data android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="@string/expo_runtime_version"/>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/AppTheme" android:exported="true" android:resizeableActivity="true" android:enableOnBackInvokedCallback="true">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
@@ -72,15 +74,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
       </intent-filter>
     </activity>
-
-    <!-- Razorpay Activity Override to remove orientation restrictions -->
-    <activity
-      android:name="com.razorpay.CheckoutActivity"
-      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize"
-      tools:replace="android:screenOrientation,android:configChanges,android:exported"
-      android:screenOrientation="fullSensor"
-      android:resizeableActivity="true"
-      android:exported="true" />
+    <activity android:name="com.razorpay.CheckoutActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize" tools:replace="android:screenOrientation,android:configChanges,android:exported" android:screenOrientation="fullSensor" android:resizeableActivity="true" android:exported="true"/>
     <uses-library android:name="org.apache.http.legacy" android:required="false"/>
   </application>
 </manifest>
